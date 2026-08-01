@@ -138,7 +138,13 @@ fn main() {
         .or_else(|_| std::env::current_dir())
         .expect("LLM_RESPONSE_TTS_ROOT not set and failed to get current dir");
     let out_dir = script_dir.join("tmp");
-    let output_dir = out_dir.join("output");
+    // Fixed system path, not repo-relative like the rest of script_dir's uses below - worker
+    // (in its container) and player (on the host) both default to the same literal path
+    // independently, so they agree on where wav files are without any coordination, and
+    // docker-compose.yml bind-mounts the host path at that identical path in the container.
+    let output_dir = std::env::var("LLM_RESPONSE_TTS_SOUND_OUTPUT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/tmp/llm-response-tts/output"));
     let lock_dir = out_dir.join("worker.lock");
     let env_file = script_dir.join("docker").join(".env");
 

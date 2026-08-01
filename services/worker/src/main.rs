@@ -237,7 +237,7 @@ async fn main() {
     let redis_url = env_or("REDIS_URL", "redis://redis:6379");
     let kokoros_url = env_or("KOKOROS_URL", "http://kokoros:3000");
     let voice = env_or("KOKOROS_VOICE", "af_heart");
-    let output_dir = PathBuf::from(env_or("OUTPUT_DIR", "/app/output"));
+    let output_dir = PathBuf::from(env_or("LLM_RESPONSE_TTS_SOUND_OUTPUT", "/tmp/llm-response-tts/output"));
     let word_refs_path = env_or("WORD_REFS_PATH", "/app/word-references.json");
     let strip_chars_path = env_or("STRIP_CHARS_PATH", "/app/strip-characters.json");
     let units_path = env_or("UNITS_PATH", "/app/measurement-units.json");

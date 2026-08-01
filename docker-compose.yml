@@ -45,11 +45,18 @@ services:
       REDIS_URL: redis://redis:6379
       KOKOROS_URL: http://kokoros:3000
       KOKOROS_VOICE: af_heart
+      LLM_RESPONSE_TTS_SOUND_OUTPUT: &sound_output /tmp/llm-response-tts/output
     volumes:
       - ./services/worker/word-references.json:/app/word-references.json:ro
       - ./services/worker/strip-characters.json:/app/strip-characters.json:ro
       - ./services/worker/measurement-units.json:/app/measurement-units.json:ro
-      - ./tmp/output:/app/output
+      # Bind-mounted at the identical path inside the container (not the usual /app/...)
+      # so the host path matches LLM_RESPONSE_TTS_SOUND_OUTPUT's default in player/worker
+      # verbatim - player (on the host) and worker (in this container) then agree on
+      # where wav files live without any coordination between them.
+      - type: bind
+        source: *sound_output
+        target: *sound_output
 
   nginx:
     image: nginx:alpine

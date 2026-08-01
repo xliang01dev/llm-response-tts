@@ -17,7 +17,10 @@ implementation of Kokoro TTS), served locally in Docker, via a `MessageDisplay` 
   transforming the text — expanding glued number+unit tokens like `24ms` or `512Mi` into spoken words
   (`services/worker/measurement-units.json`), then word references and character stripping, the same logic
   `word-refs.rs` used to apply — and synthesizing it via kokoros's OpenAI-compatible `/v1/audio/speech` API,
-  then writing the result to `tmp/output/<id>.wav`. Splitting by sentence is what lets one long message
+  then writing the result to `<id>.wav` in `LLM_RESPONSE_TTS_SOUND_OUTPUT` (defaults to
+  `/tmp/llm-response-tts/output`, bind-mounted into the container at that same path — a fixed system
+  location rather than something repo-relative, so `worker` and `player` (see below) agree on where wav
+  files live without any coordination between them). Splitting by sentence is what lets one long message
   actually use all 3 workers concurrently, rather than one worker synthesizing the whole thing serially.
 - The first `ingest` invocation to see an empty worker lock spawns the player binary (compiled from
   `host/player/src/main.rs`, installed via `cargo install` to `~/.cargo/bin/llm-response-tts-player` — see
@@ -41,7 +44,9 @@ implementation of Kokoro TTS), served locally in Docker, via a `MessageDisplay` 
   synthesizes text, ×3 replicas). Neither runs on the host directly.
 - `docker/` — `docker-compose.yml` support files: nginx's config template and bearer-token startup check,
   plus the gitignored `.env` holding the bearer token itself.
-- `tmp/` — gitignored runtime state (message buffers, generated `.wav` files); safe to delete while idle.
+- `tmp/` — gitignored runtime state (message buffers, last-message marker); safe to delete while idle.
+  Generated `.wav` files live outside the repo under `LLM_RESPONSE_TTS_SOUND_OUTPUT` instead (defaults to
+  `/tmp/llm-response-tts/output`) — see "How it works" above.
 
 ## Message queueing
 
@@ -63,7 +68,7 @@ disk at all; it just asks `ingress` — `GET /next` peeks the front of `pending_
 `{"id", "filename", "status"}`, where `status` is `PROCESSING` or `COMPLETE` depending on whether a worker
 has finished writing that id's wav yet (workers report completion into Redis right after they write the
 file). the player binary polls that endpoint every couple seconds; once it sees `COMPLETE`, it plays the file
-from `tmp/output/` via `rodio`, deletes it, and calls `POST /ack` to pop that id off `pending_ids` before
+from `LLM_RESPONSE_TTS_SOUND_OUTPUT` via `rodio`, deletes it, and calls `POST /ack` to pop that id off `pending_ids` before
 moving to the next one. If an id stays `PROCESSING` for more than 45 seconds (long enough to cover normal
 CPU-bound synthesis time, since Docker on macOS has no GPU passthrough — a worker that's actually crashed
 mid-job needs this much slack too), it gives up, acks it anyway, and moves on — so one dead job can't
@@ -84,7 +89,7 @@ sequenceDiagram
     participant I as ingress
     participant R as Redis
     participant W as worker (×3)
-    participant O as tmp/output/
+    participant O as LLM_RESPONSE_TTS_SOUND_OUTPUT
     participant P as player
 
     loop once per sentence
@@ -269,7 +274,9 @@ restarts if you want network activity limited to true first-time setup.
 
 ## Notes
 
-- `tmp/` holds runtime state (buffers, last-message marker, and generated `.wav` files under
-  `tmp/output/`) and is gitignored — safe to delete at any time while idle. There's no local playback
-  watermark to worry about anymore; ordering lives in Redis, so a `tmp/` wipe or a `redis` restart just
-  means whatever was mid-flight gets lost, not a stuck or drifted player.
+- `tmp/` holds runtime state (buffers and the last-message marker) and is gitignored — safe to delete at
+  any time while idle. Generated `.wav` files live outside the repo, under `LLM_RESPONSE_TTS_SOUND_OUTPUT`
+  (defaults to `/tmp/llm-response-tts/output`) instead — see "How it works" above for why. There's no local
+  playback watermark to worry about anymore; ordering lives in Redis, so a `tmp/` wipe, a
+  `LLM_RESPONSE_TTS_SOUND_OUTPUT` wipe, or a `redis` restart just means whatever was mid-flight gets lost,
+  not a stuck or drifted player.
