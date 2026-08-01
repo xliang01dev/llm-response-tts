@@ -1,0 +1,12 @@
+server {
+    listen 3000;
+
+    location / {
+        if ($http_authorization != "Bearer ${KOKOROS_BEARER_TOKEN}") {
+            return 401;
+        }
+
+        proxy_pass http://ingress:3001;
+        proxy_set_header Host $host;
+    }
+}

@@ -1,0 +1,13 @@
+[package]
+name = "ingress"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+axum = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"

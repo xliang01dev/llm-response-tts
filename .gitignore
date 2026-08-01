@@ -1,0 +1,6 @@
+tmp/
+/bin/
+.env
+docker/.env
+services/target/
+host/target/

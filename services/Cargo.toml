@@ -1,0 +1,3 @@
+[workspace]
+members = ["ingress", "worker"]
+resolver = "2"

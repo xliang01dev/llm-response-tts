@@ -1,0 +1,71 @@
+name: kokoros
+
+services:
+  kokoros:
+    build: https://github.com/lucasjinreal/kokoros.git
+    container_name: kokoros
+    restart: unless-stopped
+    command: ["--instances", "3", "openai"]
+    expose:
+      - "3000"
+    volumes:
+      - ./docker/tmp:/app/tmp
+
+  redis:
+    image: redis:7-alpine
+    container_name: kokoros-redis
+    restart: unless-stopped
+    expose:
+      - "6379"
+
+  ingress:
+    build:
+      context: ./services
+      dockerfile: ingress/Dockerfile
+    container_name: kokoros-ingress
+    restart: unless-stopped
+    depends_on:
+      - redis
+    environment:
+      REDIS_URL: redis://redis:6379
+    expose:
+      - "3001"
+
+  worker:
+    build:
+      context: ./services
+      dockerfile: worker/Dockerfile
+    restart: unless-stopped
+    deploy:
+      replicas: 3
+    depends_on:
+      - redis
+      - kokoros
+    environment:
+      REDIS_URL: redis://redis:6379
+      KOKOROS_URL: http://kokoros:3000
+      KOKOROS_VOICE: af_heart
+    volumes:
+      - ./services/worker/word-references.json:/app/word-references.json:ro
+      - ./services/worker/strip-characters.json:/app/strip-characters.json:ro
+      - ./services/worker/measurement-units.json:/app/measurement-units.json:ro
+      - ./tmp/output:/app/output
+
+  nginx:
+    image: nginx:alpine
+    container_name: kokoros-nginx
+    restart: unless-stopped
+    depends_on:
+      - ingress
+    env_file:
+      - path: docker/.env
+        required: true
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./docker/nginx/templates:/etc/nginx/templates
+      - ./docker/nginx/entrypoint.d/25-check-bearer-token.sh:/docker-entrypoint.d/25-check-bearer-token.sh:ro
+
+networks:
+  default:
+    name: kokoros-net
