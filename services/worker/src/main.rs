@@ -5,11 +5,11 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 const STATUS_TTL_SECS: u64 = 3600;
-const WORK_QUEUE_KEY: &str = "kokoros:work_queue";
-const EPOCH_KEY: &str = "kokoros:epoch";
+const WORK_QUEUE_KEY: &str = "llm-response-tts:work_queue";
+const EPOCH_KEY: &str = "llm-response-tts:epoch";
 
 fn status_key(id: i64) -> String {
-    format!("kokoros:status:{id}")
+    format!("llm-response-tts:status:{id}")
 }
 
 #[derive(Deserialize)]

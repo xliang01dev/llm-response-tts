@@ -2,7 +2,7 @@ server {
     listen 3000;
 
     location / {
-        if ($http_authorization != "Bearer ${KOKOROS_BEARER_TOKEN}") {
+        if ($http_authorization != "Bearer ${LLM_RESPONSE_TTS_BEARER_TOKEN}") {
             return 401;
         }
 

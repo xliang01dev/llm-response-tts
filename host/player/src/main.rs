@@ -43,7 +43,7 @@ struct Lock {
 }
 
 impl Lock {
-    // mkdir is atomic at the filesystem level, so if two speak-response invocations
+    // mkdir is atomic at the filesystem level, so if two ingest invocations
     // race to create it, exactly one acquires the lock. If the recorded holder pid
     // isn't running (e.g. a hard kill), the lock is stale - reclaim it instead of
     // blocking playback forever.
@@ -130,13 +130,13 @@ fn play_wav(mixer: &rodio::mixer::Mixer, path: &Path) -> Result<(), Box<dyn Erro
 }
 
 fn main() {
-    // This binary is installed outside the repo (see speak-response's spawn comment for why),
-    // so it can't derive the repo root from its own exe location - KOKOROS_ROOT is required,
-    // falling back to cwd for manual/dev runs from the repo root.
-    let script_dir = std::env::var("KOKOROS_ROOT")
+    // This binary is installed outside the repo (see ingest's spawn comment for why), so it
+    // can't derive the repo root from its own exe location - LLM_RESPONSE_TTS_ROOT is
+    // required, falling back to cwd for manual/dev runs from the repo root.
+    let script_dir = std::env::var("LLM_RESPONSE_TTS_ROOT")
         .map(PathBuf::from)
         .or_else(|_| std::env::current_dir())
-        .expect("KOKOROS_ROOT not set and failed to get current dir");
+        .expect("LLM_RESPONSE_TTS_ROOT not set and failed to get current dir");
     let out_dir = script_dir.join("tmp");
     let output_dir = out_dir.join("output");
     let lock_dir = out_dir.join("worker.lock");
@@ -148,7 +148,7 @@ fn main() {
         return; // lock held by a live process - nothing to do
     };
 
-    let token = read_env_var(&env_file, "KOKOROS_BEARER_TOKEN").unwrap_or_default();
+    let token = read_env_var(&env_file, "LLM_RESPONSE_TTS_BEARER_TOKEN").unwrap_or_default();
 
     let sink = match DeviceSinkBuilder::open_default_sink() {
         Ok(s) => s,

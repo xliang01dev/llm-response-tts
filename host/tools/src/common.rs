@@ -1,11 +1,13 @@
-// Shared by the speak-response and clear-speech binaries (src/bin/) via this crate's lib.rs.
+// Shared by the ingest and clear-speech binaries (src/bin/) via this crate's lib.rs.
 // player/ is a separate workspace member with its own dependencies and install location, so
 // it keeps its own small copy of read_env_var rather than depending on this crate.
 
+// ingest and clear-speech are installed via `cargo install`, which lands flat in
+// ~/.cargo/bin - so unlike the old bin/-relative layout, the repo root can no longer be
+// derived from the exe's own path. Same constraint player already has (see its main.rs);
+// the hook (and any manual run) is expected to have cwd set to the repo root.
 pub fn script_dir() -> std::path::PathBuf {
-    let exe = std::env::current_exe().unwrap().canonicalize().unwrap();
-    let bin_dir = exe.parent().expect("executable has no parent dir");
-    bin_dir.parent().expect("bin dir has no parent dir").to_path_buf()
+    std::env::current_dir().expect("failed to get current dir")
 }
 
 pub fn read_env_var(path: &std::path::Path, key: &str) -> Option<String> {

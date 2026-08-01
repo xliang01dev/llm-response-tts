@@ -1,5 +1,5 @@
 [package]
-name = "kokoros-player"
+name = "llm-response-tts-player"
 version = "0.1.0"
 edition = "2024"
 

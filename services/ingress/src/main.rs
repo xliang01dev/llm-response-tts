@@ -38,17 +38,17 @@ struct AckRequest {
     id: i64,
 }
 
-const NEXT_ID_KEY: &str = "kokoros:next_id";
-const WORK_QUEUE_KEY: &str = "kokoros:work_queue";
-const PENDING_IDS_KEY: &str = "kokoros:pending_ids";
-const EPOCH_KEY: &str = "kokoros:epoch";
+const NEXT_ID_KEY: &str = "llm-response-tts:next_id";
+const WORK_QUEUE_KEY: &str = "llm-response-tts:work_queue";
+const PENDING_IDS_KEY: &str = "llm-response-tts:pending_ids";
+const EPOCH_KEY: &str = "llm-response-tts:epoch";
 
 fn wav_filename(id: i64) -> String {
     format!("{:010}.wav", id)
 }
 
 fn status_key(id: i64) -> String {
-    format!("kokoros:status:{id}")
+    format!("llm-response-tts:status:{id}")
 }
 
 #[tokio::main]

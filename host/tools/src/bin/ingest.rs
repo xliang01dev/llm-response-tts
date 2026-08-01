@@ -2,7 +2,7 @@
 // deltas per message_id, and on the final delta POSTs the full text to the ingress service
 // (through nginx) so it lands on the Redis work queue for the worker containers.
 // Rebuild after editing: cargo build --release --manifest-path host/Cargo.toml
-use kokoros_tools::common::{read_env_var, script_dir};
+use llm_response_tts_tools::common::{read_env_var, script_dir};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
@@ -264,7 +264,7 @@ fn post_text(token: &str, text: &str) -> std::io::Result<()> {
     stream.read_to_string(&mut response)?;
     let status_line = response.lines().next().unwrap_or("");
     if !(status_line.contains(" 200 ") || status_line.contains(" 202 ")) {
-        eprintln!("speak-response: enqueue failed: {status_line}");
+        eprintln!("ingest: enqueue failed: {status_line}");
     }
     Ok(())
 }
@@ -296,7 +296,7 @@ fn run() -> std::io::Result<()> {
         return Ok(());
     }
 
-    let state_file = out_dir.join("speak-response-last-message.txt");
+    let state_file = out_dir.join("ingest-last-message.txt");
     if let Ok(prev) = std::fs::read_to_string(&state_file) {
         if prev == message_id {
             let _ = std::fs::remove_file(&buffer_file);
@@ -312,34 +312,34 @@ fn run() -> std::io::Result<()> {
     }
 
     let env_file = script_dir.join("docker").join(".env");
-    let token = read_env_var(&env_file, "KOKOROS_BEARER_TOKEN").unwrap_or_default();
+    let token = read_env_var(&env_file, "LLM_RESPONSE_TTS_BEARER_TOKEN").unwrap_or_default();
     for sentence in split_sentences(&text) {
         post_text(&token, &sentence)?;
     }
 
     // player must run from the boot volume - macOS kills CoreAudio-linked (cpal) binaries
     // executed from elsewhere with SIGKILL (Code Signature Invalid), a restriction that
-    // doesn't apply to plain binaries like this one. Resolved in priority order: KOKOROS_
-    // PLAYER_BIN env var (explicit dev override, e.g. pointing at a debug build in a custom
-    // spot), then /tmp/kokoros-rust/kokoros-player (the default dev build, see
-    // host/player/build.sh), then ~/.cargo/bin/kokoros-player (the real install, `cargo
-    // install --path host/player`) - named kokoros-player, not just player, since it's
-    // installed into a global bin directory shared with every other cargo tool on this
-    // machine. KOKOROS_ROOT tells player where to find tmp/, docker/.env, etc, since it can
-    // no longer derive that from its own (now relocated) path. player enforces its own
-    // single-instance lock on startup (mkdir tmp/worker.lock), so it's safe to always attempt
-    // a spawn here - a redundant one just exits immediately.
+    // doesn't apply to plain binaries like this one. Resolved in priority order:
+    // LLM_RESPONSE_TTS_PLAYER_BIN env var (explicit dev override, e.g. pointing at a debug
+    // build in a custom spot), then /tmp/llm-response-tts/llm-response-tts-player (the default
+    // dev build, see host/player/build.sh), then ~/.cargo/bin/llm-response-tts-player (the real
+    // install, `cargo install --path host/player`) - named llm-response-tts-player, not just
+    // player, since it's installed into a global bin directory shared with every other cargo
+    // tool on this machine. LLM_RESPONSE_TTS_ROOT tells player where to find tmp/, docker/.env,
+    // etc, since it can no longer derive that from its own (now relocated) path. player
+    // enforces its own single-instance lock on startup (mkdir tmp/worker.lock), so it's safe to
+    // always attempt a spawn here - a redundant one just exits immediately.
     let home = std::env::var("HOME").map(PathBuf::from).unwrap_or_else(|_| script_dir.clone());
-    let dev_player = PathBuf::from("/tmp/kokoros-rust/kokoros-player");
-    let player = if let Ok(p) = std::env::var("KOKOROS_PLAYER_BIN") {
+    let dev_player = PathBuf::from("/tmp/llm-response-tts/llm-response-tts-player");
+    let player = if let Ok(p) = std::env::var("LLM_RESPONSE_TTS_PLAYER_BIN") {
         PathBuf::from(p)
     } else if dev_player.exists() {
         dev_player
     } else {
-        home.join(".cargo/bin/kokoros-player")
+        home.join(".cargo/bin/llm-response-tts-player")
     };
     let _ = Command::new(player)
-        .env("KOKOROS_ROOT", &script_dir)
+        .env("LLM_RESPONSE_TTS_ROOT", &script_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())

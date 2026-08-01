@@ -1,9 +1,9 @@
-name: kokoros
+name: llm-response-tts
 
 services:
   kokoros:
     build: https://github.com/lucasjinreal/kokoros.git
-    container_name: kokoros
+    container_name: llm-response-tts-kokoros
     restart: unless-stopped
     command: ["--instances", "3", "openai"]
     expose:
@@ -13,7 +13,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: kokoros-redis
+    container_name: llm-response-tts-redis
     restart: unless-stopped
     expose:
       - "6379"
@@ -22,7 +22,7 @@ services:
     build:
       context: ./services
       dockerfile: ingress/Dockerfile
-    container_name: kokoros-ingress
+    container_name: llm-response-tts-ingress
     restart: unless-stopped
     depends_on:
       - redis
@@ -53,7 +53,7 @@ services:
 
   nginx:
     image: nginx:alpine
-    container_name: kokoros-nginx
+    container_name: llm-response-tts-nginx
     restart: unless-stopped
     depends_on:
       - ingress
@@ -68,4 +68,4 @@ services:
 
 networks:
   default:
-    name: kokoros-net
+    name: llm-response-tts-net

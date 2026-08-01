@@ -1,4 +1,12 @@
 [package]
-name = "kokoros-tools"
+name = "llm-response-tts-tools"
 version = "0.1.0"
 edition = "2024"
+
+[[bin]]
+name = "llm-response-tts-ingest"
+path = "src/bin/ingest.rs"
+
+[[bin]]
+name = "llm-response-tts-clear-speech"
+path = "src/bin/clear-speech.rs"

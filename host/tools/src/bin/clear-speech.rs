@@ -3,7 +3,7 @@
 // section for why (the player binary blocks until playback finishes; stopping mid-sentence
 // would need a different, more invasive design).
 // Rebuild after editing: cargo build --release --manifest-path host/Cargo.toml
-use kokoros_tools::common::{read_env_var, script_dir};
+use llm_response_tts_tools::common::{read_env_var, script_dir};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 
@@ -22,7 +22,7 @@ fn clear(token: &str) -> std::io::Result<String> {
 fn main() {
     let script_dir = script_dir();
     let env_file = script_dir.join("docker").join(".env");
-    let token = read_env_var(&env_file, "KOKOROS_BEARER_TOKEN").unwrap_or_default();
+    let token = read_env_var(&env_file, "LLM_RESPONSE_TTS_BEARER_TOKEN").unwrap_or_default();
 
     match clear(&token) {
         Ok(response) if response.lines().next().unwrap_or("").contains(" 204 ") => {
