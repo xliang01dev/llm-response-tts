@@ -158,10 +158,12 @@ doing, for anyone who wants to run or customize them individually.
    `speak-response` and `clear-speech`, neither of which has such a dependency. `cargo install` always
    installs into `~/.cargo/bin`, which is on the boot volume, so this works regardless of where the repo
    itself lives. It's named `kokoros-player` rather than just `player` since `~/.cargo/bin` is a global
-   directory shared with every other cargo tool on the machine. `speak-response` looks for it at
-   `/tmp/kokoros-rust/kokoros-player` first (a dev build, see `host/player/build.sh`) and falls back to
-   `~/.cargo/bin/kokoros-player`. Either way, it passes the repo's actual location to player via a
-   `KOKOROS_ROOT` environment variable when it spawns it, so player still finds `tmp/`, `docker/.env`, etc.
+   directory shared with every other cargo tool on the machine. `speak-response` resolves it in priority
+   order: the `KOKOROS_PLAYER_BIN` env var if set (an explicit dev override, e.g. pointing at a debug build
+   somewhere else), then `/tmp/kokoros-rust/kokoros-player` (the default dev build, see
+   `host/player/build.sh`), then `~/.cargo/bin/kokoros-player` (the real install). Either way, it passes
+   the repo's actual location to player via a `KOKOROS_ROOT` environment variable when it spawns it, so
+   player still finds `tmp/`, `docker/.env`, etc.
    correctly.
 
 4. Wire the hook in `.claude/settings.json` (project-level, already included in this repo):
