@@ -112,6 +112,10 @@ fi
 echo "    stack is responding correctly"
 "$HOME/.cargo/bin/llm-response-tts-clear-all-speech" >/dev/null 2>&1 || true
 
+echo "==> Sending a test message - turn your speakers on"
+echo '{"final":true,"message_id":"setup-test","delta":"Hello world"}' | "$HOME/.cargo/bin/llm-response-tts-ingest"
+echo "    you should hear \"Hello world\" spoken back within a few seconds"
+
 echo
 echo "==> Done. Open Claude Code in this directory and talk to it normally - responses"
 echo "    should play back as audio. First run will prompt you to trust this project's"

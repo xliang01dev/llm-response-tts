@@ -29,7 +29,11 @@ Speaks LLM agent responses out loud using [kokoros](https://github.com/lucasjinr
 
 ## How to install
 
-Run `./setup.sh` to install and start everything in one shot. Safe to re-run after a `git pull`.
+Install and start everything in one shot. Safe to re-run after a `git pull`.
+
+```bash
+./setup.sh
+```
 
 If you want to manually install the components, follow these instructions:
 
@@ -128,17 +132,30 @@ Both Cargo workspaces (`host/`, `services/`) have unit test coverage for their n
 
 ## How to uninstall
 
-Run `./uninstall.sh`. It removes:
+It removes:
 
 - The Docker stack (`docker compose down` - stops and removes the containers and network, not the built images)
 - The host binaries (`cargo uninstall` for `ingest`, `clear-speech`, `clear-all-speech`, and `player`)
 - The pre-commit hook wiring (`git config --unset core.hooksPath`)
 
+```bash
+./uninstall.sh
+```
+
 It leaves a few things in place, since removing them is either destructive (your bearer token) or touches state outside the repo (your shell rc, `/tmp`) - remove these manually if you want a completely clean slate:
 
-- `docker/.env` - delete the file, or just `rm docker/.env`
+- `docker/.env`, your bearer token
+
+  ```bash
+  rm docker/.env
+  ```
+
 - The PATH line `setup.sh` may have added to your `.zshrc`/`.bash_profile`/`config.fish` - remove it by hand if you don't use `~/.cargo/bin` for anything else
-- Runtime state under `/tmp/llm-response-tts` (queued audio, buffers, player locks) - `rm -rf /tmp/llm-response-tts`
+- Runtime state under `/tmp/llm-response-tts` (queued audio, buffers, player locks)
+
+  ```bash
+  rm -rf /tmp/llm-response-tts
+  ```
 
 ## Supporting documentation
 
