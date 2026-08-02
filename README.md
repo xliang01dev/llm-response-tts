@@ -16,6 +16,7 @@ speaks LLM can wire in the same way.
 - [How to customize voices](#how-to-customize-voices)
 - [What it installs](#what-it-installs)
 - [What are the env variables](#what-are-the-env-variables)
+- [Testing](#testing)
 - [Supporting documentation](#supporting-documentation)
   - [Available voices](#available-voices-link)
   - [Architecture](#architecture-link)
@@ -31,9 +32,10 @@ speaks LLM can wire in the same way.
 ## How to install
 
 Run `./setup.sh` to do all of the below in one shot: installs Rust if missing (Docker must already be
-installed), creates `docker/.env`, installs the host binaries, builds and starts the Docker stack, and
-verifies it responds to a real request. Safe to re-run after a `git pull`. The steps below are what it's
-doing, for anyone who wants to run or customize them individually.
+installed), wires up a pre-commit hook that runs the Rust test suite (`.githooks/pre-commit`, see
+[testing](#testing)), creates `docker/.env`, installs the host binaries, builds and starts the Docker
+stack, and verifies it responds to a real request. Safe to re-run after a `git pull`. The steps below are
+what it's doing, for anyone who wants to run or customize them individually.
 
 1. Create `docker/.env` with a bearer token.
 
@@ -157,6 +159,22 @@ See [architecture](docs/architecture.md) for why sound output lives outside the 
 | `WORD_REFS_PATH` | `docker-compose.yml` (`worker`, not set by default) | Path *inside the worker container* to the word-reference substitutions JSON | `/app/word-references.json` |
 | `STRIP_CHARS_PATH` | `docker-compose.yml` (`worker`, not set by default) | Path *inside the worker container* to the strip-characters JSON | `/app/strip-characters.json` |
 | `UNITS_PATH` | `docker-compose.yml` (`worker`, not set by default) | Path *inside the worker container* to the measurement-units JSON | `/app/measurement-units.json` |
+
+## Testing
+
+Both Cargo workspaces (`host/`, `services/`) have unit test coverage for their non-trivial logic
+(the hand-rolled JSON parser and sentence splitter in `ingest`, the word-reference/measurement
+text transforms in `worker`, `ingress`'s `session_dir` validation, `player`'s file-lock
+acquire/reclaim, and the shared HTTP/env-var helpers in `host/tools`), living in a sibling
+`*_tests.rs` next to each source file rather than inline.
+
+```bash
+./scripts/test.sh   # builds and tests both host/ and services/
+```
+
+`./setup.sh` runs `git config core.hooksPath .githooks` so `.githooks/pre-commit` - which just
+calls the script above - blocks a commit if the build or any test fails. Run it manually any time
+with `./scripts/test.sh`.
 
 ## Supporting documentation
 

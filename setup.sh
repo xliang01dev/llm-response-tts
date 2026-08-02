@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# One-shot setup: installs rust via Homebrew, installs the host-side binaries via `cargo
-# install` (so they land on PATH in ~/.cargo/bin, not tied to this checkout - see README's
-# Setup step 3), builds the Docker stack, and starts it. Safe to re-run after a git pull to
-# rebuild everything - it won't touch an existing docker/.env or overwrite it.
+# One-shot setup: installs rust via Homebrew, wires up the pre-commit test hook, installs the
+# host-side binaries via `cargo install` (so they land on PATH in ~/.cargo/bin, not tied to
+# this checkout - see README's Setup step 3), builds the Docker stack, and starts it. Safe to
+# re-run after a git pull to rebuild everything - it won't touch an existing docker/.env or
+# overwrite it.
 set -euo pipefail
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
