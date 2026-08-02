@@ -3,9 +3,6 @@
 Speaks Claude Code's responses out loud using [kokoros](https://github.com/lucasjinreal/kokoros) (a Rust
 implementation of Kokoro TTS), served locally in Docker, via a `MessageDisplay` hook.
 
-More docs: [available voices](docs/voices.md) - [architecture](docs/architecture.md) -
-[security audit](docs/security-audit.md)
-
 ## How to install
 
 | Tool | Install | Why it's needed |
@@ -115,3 +112,16 @@ See [architecture](docs/architecture.md) for why sound output lives outside the 
 | `WORD_REFS_PATH` | `docker-compose.yml` (`worker`, not set by default) | Path *inside the worker container* to the word-reference substitutions JSON | `/app/word-references.json` |
 | `STRIP_CHARS_PATH` | `docker-compose.yml` (`worker`, not set by default) | Path *inside the worker container* to the strip-characters JSON | `/app/strip-characters.json` |
 | `UNITS_PATH` | `docker-compose.yml` (`worker`, not set by default) | Path *inside the worker container* to the measurement-units JSON | `/app/measurement-units.json` |
+
+## More docs
+
+[**Available voices**](docs/voices.md) - the full list of voice names kokoros accepts, beyond the handful
+mentioned in "Customizing" above, plus where to look if you need one that isn't listed there.
+
+[**Architecture**](docs/architecture.md) - how a message flows from the hook through `ingest`, `ingress`,
+the `worker` pool, and `player`, including diagrams, the per-session isolation design, and how playback
+ordering is kept correct despite parallel synthesis.
+
+[**Security audit**](docs/security-audit.md) - what's exposed on the host, how the bearer token is enforced
+and fails closed, what network egress this project has, and the trust boundary session isolation does (and
+doesn't) provide.
