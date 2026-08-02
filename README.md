@@ -49,6 +49,8 @@ If you want to manually install the components, follow these instructions:
    docker compose up -d --build
    ```
 
+   If this repo isn't on your boot volume (e.g. it's on an external or secondary drive, as `/Volumes/...` paths are on macOS), Docker Desktop bind-mounts several of its files into containers (see [Architecture](docs/architecture.md)), so macOS will prompt for permission to access that volume - approve it.
+
 3. Install the host binaries via `cargo install` (re-run after editing their source).
 
    ```bash

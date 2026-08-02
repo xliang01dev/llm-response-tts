@@ -86,37 +86,58 @@ fi
 echo "==> Building and starting the Docker stack"
 docker compose up -d --build
 
-echo "==> Verifying the stack responds"
+echo "==> Waiting for kokoros to finish loading its TTS models"
+# kokoros is backend-only (no published port), so it can't be polled directly from the host -
+# watch its own log line instead. Without this, a worker can grab a job and try to synthesize
+# before kokoros has bound its port, which fails outright with no retry (no .wav ever
+# appears for that job).
+for _ in $(seq 1 60); do
+  docker compose logs kokoros 2>/dev/null | grep -q "OpenAI-compatible HTTP server" && break
+  sleep 1
+done
+
+echo "==> Waiting for the stack to accept requests"
+# nginx itself can be up (and pass a container-Running check) well before ingress behind it
+# has bound its port, since nginx resolves that upstream at startup regardless of whether the
+# app inside is actually listening yet - so poll the real proxied path instead, until it
+# stops 502ing.
 token=$(grep LLM_RESPONSE_TTS_BEARER_TOKEN docker/.env | cut -d= -f2-)
-enqueue() {
-  curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $token" \
-    -H "Content-Type: application/json" \
-    -d '{"text":"setup verification","session":"setup-verify","output_dir":"/tmp/llm-response-tts/output/setup-verify"}' \
-    http://127.0.0.1:3000/ 2>/dev/null || echo "000"
-}
-sleep 2
-code=$(enqueue)
-if [ "$code" != "202" ]; then
-  # nginx can end up holding a stale connection to an old container IP if it was already
-  # running from a previous setup.sh run while kokoros/ingress just got rebuilt above -
-  # recreating it re-resolves the upstream and clears this up.
-  echo "    stack didn't respond as expected (http $code) - recreating nginx and retrying"
-  docker compose up -d --force-recreate nginx
-  sleep 2
-  code=$(enqueue)
-  if [ "$code" != "202" ]; then
-    echo "    still not responding (http $code) - check 'docker compose logs' for details" >&2
-    exit 1
-  fi
+code="000"
+for _ in $(seq 1 30); do
+  code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $token" \
+    -H "Content-Type: application/json" -d '{}' http://127.0.0.1:3000/ 2>/dev/null || echo "000")
+  [ "$code" != "502" ] && [ "$code" != "000" ] && break
+  sleep 1
+done
+if [ "$code" = "502" ] || [ "$code" = "000" ]; then
+  echo "    stack still not reachable (http $code) after 30s - check 'docker compose logs'" >&2
+  exit 1
 fi
-echo "    stack is responding correctly"
-"$HOME/.cargo/bin/llm-response-tts-clear-all-speech" >/dev/null 2>&1 || true
 
 echo "==> Sending a test message - turn your speakers on"
-echo '{"final":true,"message_id":"setup-test","delta":"Hello world"}' | "$HOME/.cargo/bin/llm-response-tts-ingest"
-echo "    you should hear \"Hello world\" spoken back within a few seconds"
+sound_output_base="${LLM_RESPONSE_TTS_SOUND_OUTPUT:-/tmp/llm-response-tts/output}"
+mkdir -p "$sound_output_base"
+marker=$(mktemp)
+echo '{"final":true,"message_id":"setup-test","delta":"You have successfully installed llm-response-tts"}' | "$HOME/.cargo/bin/llm-response-tts-ingest"
 
-echo
-echo "==> Done. Open Claude Code in this directory and talk to it normally - responses"
-echo "    should play back as audio. First run will prompt you to trust this project's"
-echo "    .claude/settings.json since hooks execute shell commands - approve it."
+wav=""
+for _ in $(seq 1 30); do
+  wav=$(find "$sound_output_base" -name '*.wav' -newer "$marker" 2>/dev/null | head -n1)
+  [ -n "$wav" ] && break
+  sleep 0.5
+done
+rm -f "$marker"
+if [ -z "$wav" ]; then
+  echo "    no .wav appeared under $sound_output_base within 15s - check 'docker compose logs' for details" >&2
+  exit 1
+fi
+
+for _ in $(seq 1 15); do
+  [ ! -f "$wav" ] && break
+  sleep 1
+done
+if [ -f "$wav" ]; then
+  echo "    playback did not succeed - check that player is running" >&2
+  exit 1
+fi
+echo "==> Done - see https://github.com/xliang01dev/llm-response-tts#how-to-hook-up-to-a-coding-agent to wire it into your coding agent"
