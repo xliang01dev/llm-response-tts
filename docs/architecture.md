@@ -1,104 +1,240 @@
 # Architecture
 
-- `ingest` receives streamed message deltas from the hook and buffers them per `message_id`. Once the final
-  delta arrives, it splits the full text into sentences (on `.`/`!`/`?`/`:`, only when followed by
-  whitespace or end of text, so decimals and no-space abbreviations stay intact) and POSTs each one
-  separately to nginx (`127.0.0.1:3000`, with the bearer token), which forwards it to the `ingress` service
-  - so a long message becomes several small jobs instead of one big one. It also dedupes on that session's
-  own `ingest-last-message.txt` so the same message isn't spoken twice. Each POST also carries the calling
-  session's hash and output directory (see "Session isolation" below).
-- `ingress` assigns each sentence its own monotonically increasing id (via Redis `INCR`, shared globally
-  across all sessions - see "Session isolation" for why a global counter is fine) and pushes it onto a
-  Redis work queue. Three `worker` containers compete for jobs off that queue in parallel, each
-  transforming the text - expanding glued number+unit tokens like `24ms` or `512Mi` into spoken words
-  (`services/worker/measurement-units.json`), then word references and character stripping - and
-  synthesizing it via kokoros's OpenAI-compatible `/v1/audio/speech` API, then writing the result to
-  `<id>.wav` in that job's own session output directory. Splitting by sentence is what lets one long message
-  actually use all 3 workers concurrently, rather than one worker synthesizing the whole thing serially.
-- The first `ingest` invocation for a given session to see that session's lock free spawns `player` in the
-  background, which plays that session's wav files back in strict id order - never whichever one finishes
-  synthesizing first - and exits after 10s of nothing left to play.
-- Synthesis is entirely local - kokoros runs the Kokoro-82M model in-container and doesn't make any
-  outbound network calls, so no audio or text leaves the machine. Redis, `ingress`, and the `worker`
-  containers are all internal-only too (no host-published ports), same as kokoros always was.
+A response streams out of the LLM tool, gets buffered and sentence-split on the host by
+`ingest`, and crosses into Docker as one authenticated HTTP request per sentence. `nginx` gates
+every request behind a bearer token and forwards it to `ingress`, which queues the sentence in
+Redis; a pool of `worker` containers pulls jobs off that queue, synthesizes each one through
+kokoros, and writes the resulting `.wav` to a shared output directory. `player`, back on the
+host, polls `ingress` for completed sentences and plays them in the order they were generated,
+regardless of which worker finished first. Everything from `ingress` through kokoros stays on an
+internal-only Docker network with no route to the internet - `nginx` is the sole bridge between
+the host and that network, and the sole point where a request is authenticated.
+
+## Diagrams
+
+### Host machine
 
 ```mermaid
 graph LR
     subgraph Host["Host machine"]
-        CC["LLM tool<br/>(session A cwd)"] -->|"stream text"| I["ingest"]
+        CC["LLM tool<br/>(session A cwd)"] -->|"stream deltas<br/>(stdin, JSON)"| I["ingest"]
         I -.spawns.-> P["player<br/>(session A)"]
-        CS["clear-speech<br/>(session A)"]
-        CAS["clear-all-speech"]
+        U["You<br/>(terminal)"] -->|"run manually"| CS["clear-speech<br/>(session A)"]
+        U -->|"run manually"| CAS["clear-all-speech"]
     end
 
-    subgraph Docker["Docker: llm-response-tts-net"]
-        N["nginx :3000<br/>(bearer token check)"] --> IG["ingress"]
-        IG --> R[("Redis<br/>(keyed per session)")]
+    N(["nginx :3000<br/>(see Docker diagram below)"])
+    SO[("LLM_RESPONSE_TTS_SOUND_OUTPUT/<br/>session-A-hash/*.wav")]
+
+    I -->|"POST / (session, session_dir,<br/>Bearer token)"| N
+    P -->|"GET /next, POST /ack<br/>(Bearer token)"| N
+    CS -->|"POST /clear<br/>(Bearer token)"| N
+    CAS -->|"POST /clear-all<br/>(Bearer token)"| N
+    P -->|"read + delete wav"| SO
+```
+
+Only `ingest` is ever driven by the LLM tool. `player` is started by `ingest`, not called
+directly by anything upstream of it, and the two clear tools are invoked by a human at a
+terminal, not by the LLM tool.
+
+### Docker containers
+
+```mermaid
+graph LR
+    subgraph Edge["edge network"]
+        N["nginx :3000<br/>(bearer token check)"]
+    end
+
+    subgraph Backend["backend network (internal, no egress)"]
+        IG["ingress"] --> R[("Redis<br/>(keyed per session)")]
         W["worker (x3)"] --> R
         W --> K["kokoros"]
     end
 
-    SO[("LLM_RESPONSE_TTS_SOUND_OUTPUT/<br/>session-A-hash/*.wav")]
+    N -->|"proxy_pass"| IG
 
-    I -->|"POST / (session, output_dir)"| N
-    P -->|"GET /next?session=, POST /ack"| N
-    CS -->|"POST /clear {session}"| N
-    CAS -->|"POST /clear-all"| N
-    W -->|"write wav to job's output_dir"| SO
-    P -->|"read + delete wav"| SO
+    SO[("session output dir<br/>(bind mount)")]
+    W -->|"write <id>.wav"| SO
 ```
+
+## Tools (local)
+
+Host-side binaries, built by `cargo install` (see the main [README](../README.md)). Only
+`ingest` is actually invoked by the LLM tool, via the `MessageDisplay` hook in
+`.claude/settings.json` - `player` is spawned by `ingest`, not by the LLM tool directly, and
+`clear-speech`/`clear-all-speech` are commands you run yourself in a terminal, not something any
+LLM tool triggers.
+
+| Tool                | Summary                                                                                                            | Communicates via                                                                                                    | Crate dependencies                             |
+|---------------------|---------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------|-------------------------------------------------|
+| `ingest`             | `MessageDisplay` hook entrypoint; buffers streamed deltas per message, splits finished text into sentences, dedupes repeat sends. | Reads JSON deltas from stdin; `POST /` to nginx per sentence (`session`, `session_dir`, Bearer token); spawns `player`. | none (hand-rolled JSON/HTTP, std only)          |
+| `player`             | Per-session poll-and-play loop; plays synthesized sentences back in generation order, one instance per session.    | `GET /next` / `POST /ack` to nginx (Bearer token); reads and deletes `.wav` files from the session's output dir.      | `rodio`, `ureq`, `serde`, `serde_json`, `libc`  |
+| `clear-speech`       | Drops everything queued for the calling session. Run manually.                                                     | `POST /clear` to nginx (Bearer token).                                                                                | none (hand-rolled JSON/HTTP, std only)          |
+| `clear-all-speech`   | Drops everything queued across every session. Run manually.                                                        | `POST /clear-all` to nginx (Bearer token).                                                                            | none (hand-rolled JSON/HTTP, std only)          |
+
+## Services (Docker)
+
+Everything behind nginx. See [security-audit.md](security-audit.md) for how these are isolated
+from each other and from the internet.
+
+| Service        | Summary                                                                                                                    | Communicates via                                                                                                          |
+|----------------|-------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------|
+| `nginx`        | Host-facing reverse proxy; the only container with a published port; enforces the bearer token before forwarding anything. | Listens on `127.0.0.1:3000`; proxies to `ingress` over the backend network.                                                   |
+| `ingress`      | Queue API; the only write path into Redis. Validates `session_dir` against `session`, derives `output_dir` server-side, assigns sentence ids. | HTTP from nginx only; talks to Redis over the backend network.                                                                |
+| `redis`        | Work queue plus per-session ordering/status state.                                                                          | TCP, backend network only; read and written by `ingress` and `worker`.                                                        |
+| `worker` (×3)  | Transforms text (unit expansion, word references, character stripping) and synthesizes it via kokoros; writes the resulting `.wav`. | Pulls jobs from Redis; calls kokoros's OpenAI-compatible API over the backend network; writes to the shared output dir bind mount. |
+| `kokoros`      | Runs the Kokoro-82M model in-container; the only thing that actually does text-to-speech.                                   | HTTP from `worker` only, backend network, no outbound internet access (`internal: true`).                                     |
+
+## Rust frameworks and crates (Docker services)
+
+Scoped to `ingress` and `worker` - the two services this repo actually builds. `redis` and
+`nginx` are unmodified upstream images; kokoros is a separate audited project (see
+[security-audit.md](security-audit.md)).
+
+| Crate                              | Used by            | Purpose                                                                          |
+|-------------------------------------|---------------------|-----------------------------------------------------------------------------------|
+| `axum`                               | `ingress`            | HTTP web server framework - routing and request/response for all 5 endpoints.     |
+| `tokio`                              | `ingress`, `worker`  | Async runtime both services run on.                                               |
+| `redis`                              | `ingress`, `worker`  | Redis client - work queue, per-session ordering, status keys.                     |
+| `reqwest`                            | `worker`             | HTTP client - calls kokoros's OpenAI-compatible `/v1/audio/speech` endpoint.      |
+| `serde` / `serde_json`               | `ingress`, `worker`  | JSON (de)serialization for request/response bodies and queue payloads.            |
+| `tracing` / `tracing-subscriber`     | `ingress`, `worker`  | Structured logging.                                                               |
+
+## HTTP endpoints [link](endpoints.md)
+
+`ingress`'s full HTTP surface - every enqueue, poll, ack, and clear request nginx proxies to it -
+is documented separately in [endpoints.md](endpoints.md).
 
 ## Session isolation
 
-Every calling session (in practice, every distinct project `cwd` the hook fires from) gets its own
-queue, output directory, and `player` process, so multiple sessions open at once never mix up each other's
-wav files or playback order. `ingest` and `player` each derive a `session-hash` from `cwd` - a 32-bit
-MurmurHash3 of the absolute path, base62-encoded to a fixed 6 characters - deterministically and without any
-coordination between them, since both are computing the same hash from the same input. That hash prefixes a
-human-readable directory name (`<hash>-<cwd-last-component>`, e.g. `2wfFFn-llm-response-tts`), used for both
-the output subdirectory under `LLM_RESPONSE_TTS_SOUND_OUTPUT` and the lock directory under
-`/tmp/llm-response-tts`. Every Redis key that needs to stay independent per session (`pending_ids`, the
-epoch counter, and the set of known session hashes) is suffixed with the bare hash. The one exception is
-`next_id`, the global monotonic id counter - it stays shared across all sessions on purpose, since ids only
-need to increase, not be contiguous or session-scoped, and a shared counter is simpler than one per session
-for no behavioral benefit.
+### What is a session?
+
+A session is one distinct project working directory (`cwd`) that the LLM tool's hook fires from.
+It's not a login, a token, or anything issued by a server - it's just an identity derived
+entirely from *where on disk* a request originated.
+
+That means identity follows the directory, not the tool or the window. Two Claude Code windows
+open in the same project directory are the same session. The same project opened in two
+different tools (Claude Code and Codex, say) is also the same session, since both derive identity
+from the same `cwd`.
+
+A session's actual identity is a `session-hash`: a 32-bit MurmurHash3 of the absolute `cwd` path,
+base62-encoded to a fixed 6 characters. That hash prefixes a human-readable directory name
+(`<hash>-<cwd-last-component>`, e.g. `2wfFFn-llm-response-tts`), used anywhere a session needs a
+filesystem-safe name rather than the bare hash.
+
+### How is session used in managing requests and processing audio?
+
+Every request `ingest`, `player`, and the `clear-*` tools send to `ingress` carries the session
+hash (see [HTTP endpoints](endpoints.md)). `ingress` uses that hash to namespace state in Redis:
+each session gets its own playback-order list and its own epoch counter (see
+[Message queueing](#message-queueing)), so one session's queue, ordering, and clear operations
+never touch another's.
+
+The one exception is the global monotonic id counter used to assign playback order. It stays
+shared across all sessions on purpose, since ids only need to increase, not be contiguous or
+session-scoped - a shared counter is simpler than one per session for no behavioral benefit.
+
+The human-readable `session_dir` is what ties a session to where its audio actually lives on
+disk. `ingress` validates it against the session hash on enqueue (see
+[security-audit.md](security-audit.md#server-side-output_dir-derivation)) before using it to
+build that job's output directory. That's what lets `worker` write each `.wav` under the correct
+session's own subdirectory of `LLM_RESPONSE_TTS_SOUND_OUTPUT`, and what keeps `player` reading
+and deleting files only from its own session's directory.
+
+### Player lock
+
+Only one `player` process may run per session at a time - that's what keeps a session's audio
+playing in one strict order instead of two players racing to read from the same directory.
+
+`player` enforces this itself on startup with an atomic lock scoped to that session's own path. If
+two `ingest` invocations for the same session each try to spawn a player, only one acquires the
+lock; the other's spawn attempt just exits immediately, and the already-running player keeps
+handling that session's queue.
+
+Because the lock path is derived from the session hash, a different session's lock always lives
+somewhere else entirely - sessions never contend with each other for it.
+
+Session identity is a routing and isolation mechanism, not an access-control one - see
+[security-audit.md](security-audit.md#session-isolation-is-ux-not-access-control) for what that
+does and doesn't protect against.
 
 ## Message queueing
 
-An LLM tool can emit several messages back-to-back - sometimes overlapping in time - and each one triggers
-its own `ingest` invocation, which itself splits into multiple sentence-level jobs (see above). Either way,
-synthesis happens across 3 parallel workers, so a later sentence - from the same message or a different one
-- can easily finish before an earlier one; playback still has to happen in the order the text was actually
-generated, so ordering can no longer be inferred from "whichever wav file shows up first."
+### Why a queue with workers running in parallel?
 
-The id `ingress` assigns via Redis `INCR` is the fix: each sentence gets one assigned once, atomically, at
-the moment it's accepted, before any parallel processing happens, so it reflects true generation order
-regardless of which worker later picks up the job or how long synthesis takes. That same id is also
-pushed onto a per-session Redis list, `llm-response-tts:pending_ids:<session-hash>`, purely to track that
-session's playback order - separate from `llm-response-tts:work_queue`, which is shared across all sessions
-and is what the workers pull jobs from.
+An LLM tool can emit several messages back-to-back - sometimes overlapping in time - and `ingest`
+splits each one into several sentence-level jobs on top of that (see [Tools
+(local)](#tools-local)). A single long response can easily produce a dozen small jobs in quick
+succession, and synthesizing them one at a time, serially, would mean the first sentence isn't
+heard until the whole response has been spoken through one worker.
 
-Ordering state lives entirely in Redis, not in a local file. `player` doesn't track "the next id" on disk
-at all; it just asks `ingress` - `GET /next?session=<session-hash>` peeks the front of that session's
-`pending_ids` list and returns `{"id", "filename", "status"}`, where `status` is `PROCESSING` or `COMPLETE`
-depending on whether a worker has finished writing that id's wav yet (workers report completion into Redis
-right after they write the file). `player` polls that endpoint every couple seconds; once it sees
-`COMPLETE`, it plays the file from its session's output directory via `rodio`, deletes it, and calls
-`POST /ack` (also carrying `session`) to pop that id off `pending_ids` before moving to the next one. If an
-id stays `PROCESSING` for more than 45 seconds (long enough to cover normal CPU-bound synthesis time, since
-Docker on macOS has no GPU passthrough - a worker that's actually crashed mid-job needs this much slack
-too), it gives up, acks it anyway, and moves on - so one dead job can't stall everything behind it. With
-nothing pending at all for 10 seconds, `player` exits.
+A queue backed by a pool of workers fixes that: any of the 3 workers can pick up any pending job,
+so a burst of sentences gets synthesized concurrently instead of queued behind each other. That's
+what keeps playback starting quickly even for a long response.
 
-Keeping this state server-side instead of in a local watermark file removes a whole category of bugs: a
-local file can drift from what Redis actually has queued (e.g. if `/tmp` gets wiped while Redis keeps
-counting, or Redis restarts while the local file doesn't) - `pending_ids` can't drift from itself.
+Running things in parallel introduces its own problem, though - a later sentence can easily
+finish synthesizing before an earlier one, since synthesis time varies per job. Playback still
+has to happen in the order the text was actually generated, so ordering can no longer be inferred
+from "whichever file finishes first." The rest of this section is mostly about how that ordering
+is preserved despite the parallelism.
 
-Only one `player` may run per session, enforced with `mkdir /tmp/llm-response-tts/lock/<session-dir>.lock`
-(see "Session isolation" above): `mkdir` is atomic at the filesystem level, so if two `ingest` invocations
-for the same session race to create it, exactly one spawns that session's player; the rest just enqueue
-their message and trust the already-running player to reach it in order. A different session's lock lives
-under a different directory entirely, so sessions never contend with each other for it.
+### Why Redis?
+
+The queue and the ordering state both need to be visible to multiple independent containers -
+`ingress` and 3 replicas of `worker` - which rules out anything held in one process's memory or
+in a local file. Redis is shared, network-reachable state that all of them can reach over the
+internal Docker network, with exactly the primitives this problem needs: atomic counters
+(`INCR`) for handing out ids without a race, blocking list pops (`BRPOP`) so idle workers don't
+have to busy-poll for work, and cheap per-session keys for isolating one session's ordering from
+another's (see [Session isolation](#session-isolation)). It's also already the natural home for
+this kind of ephemeral, fast-changing coordination state - nothing here needs to survive a Redis
+restart, so a lighter-weight in-memory store was a better fit than reusing a persistent database
+for it.
+
+### Key shapes in Redis
+
+| Key                                        | Type              | Represents                                                                                                   |
+|---------------------------------------------|-------------------|------------------------------------------------------------------------------------------------------------------|
+| `llm-response-tts:next_id`                   | String (counter)  | The global monotonic id counter. Shared across all sessions - see [Session isolation](#session-isolation) for why. |
+| `llm-response-tts:work_queue`                | List              | The shared job queue. Every enqueued sentence lands here; any worker, from any session, can pop the next one.     |
+| `llm-response-tts:pending_ids:<session-hash>`| List              | One session's ordered list of ids still awaiting playback. Defines that session's playback order.               |
+| `llm-response-tts:epoch:<session-hash>`      | String (counter)  | One session's "generation" number. Bumped on clear so any job a worker already popped for that session gets silently discarded instead of writing audio nobody will hear. |
+| `llm-response-tts:status:<id>`               | String (1h TTL)   | Marks that a job's audio has finished synthesizing - its existence means `COMPLETE`. Expires on its own so a completed-but-never-acked job doesn't linger forever. |
+| `llm-response-tts:sessions`                  | Set               | Every session hash that has ever enqueued a job, so `clear-all` knows which sessions to sweep.                    |
+
+### Who calls Redis and updates it?
+
+Only `ingress` and `worker` ever talk to Redis directly. `ingest`, `player`, and the `clear-*`
+tools never touch it themselves - they go through `ingress`'s HTTP API (see [HTTP
+endpoints](endpoints.md)), and `ingress` is what translates those requests into the Redis
+operations above.
+
+On enqueue, `ingress` reads the session's current epoch, assigns the next id, and writes the job
+onto both the shared work queue and that session's ordering list. On `/next` and `/ack`, it reads
+and pops from that session's ordering list and checks or clears the job's status key. On `/clear`
+and `/clear-all`, it bumps epoch counters and drops ordering lists (and, for `/clear-all`, drains
+the shared work queue too).
+
+`worker` only reads from the shared work queue and writes the status key once a job completes -
+it also reads a session's epoch after synthesizing, to check whether that job was cleared while
+it was mid-flight (see the epoch row above).
+
+### Once worker is done, where does the audio go?
+
+`worker` writes the synthesized audio to a temporary file and renames it into place as `<id>.wav`
+inside that job's output directory - a subdirectory of `LLM_RESPONSE_TTS_SOUND_OUTPUT`, bind-mounted
+into both the `worker` containers and the host. The rename is what makes the write atomic from a
+reader's perspective: `player` never sees a partially-written file. Once the file is in place,
+`worker` sets that job's status key so `ingress` can report it as `COMPLETE`.
+
+`player` never gets pushed a notification - it polls `ingress` every couple of seconds for its
+session's next pending id, and once that id's status comes back `COMPLETE`, it reads the file
+from that same bind-mounted output directory (now visible on the host), plays it, and deletes it.
+If an id stays un-`COMPLETE` for more than 45 seconds - long enough to cover normal synthesis
+time, since Docker on macOS has no GPU passthrough, but also enough slack to assume a worker
+genuinely crashed mid-job - `player` gives up, acks it anyway, and moves on, so one dead job can't
+stall everything queued behind it. With nothing pending at all for 10 seconds, `player` exits.
 
 ```mermaid
 sequenceDiagram
@@ -111,23 +247,30 @@ sequenceDiagram
     participant P as player (session A)
 
     loop once per sentence
-        H->>N: POST / (session, output_dir, Bearer token)
+        H->>N: POST / (session, session_dir, Bearer token)
         N->>I: proxy_pass
-        I->>R: INCR next_id, LPUSH work_queue, RPUSH pending_ids:A
+        I->>R: GET epoch:A
+        I->>R: INCR next_id
+        I->>R: LPUSH work_queue, RPUSH pending_ids:A, SADD sessions A
         I-->>H: 202 {id}
     end
 
     par competing consumers (any session)
         W->>R: BRPOP work_queue
         W->>W: transform + synthesize (kokoros)
-        W->>O: write <id>.wav.tmp, rename to <id>.wav (job's own output_dir)
-        W->>R: SET status:<id> COMPLETE
+        W->>R: GET epoch:A
+        alt epoch unchanged
+            W->>O: write <id>.wav.tmp, rename to <id>.wav (job's own output_dir)
+            W->>R: SETEX status:<id> COMPLETE (1h TTL)
+        else session was cleared mid-job
+            W->>W: discard - no file written, no status set
+        end
     end
 
     loop poll-and-play in order
         P->>N: GET /next?session=A (Bearer token)
         N->>I: proxy_pass
-        I->>R: LINDEX pending_ids:A 0, check status:<id>
+        I->>R: LINDEX pending_ids:A 0, EXISTS status:<id>
         I-->>P: {id, filename, status}
         P->>O: once COMPLETE, play + delete <filename>
         P->>N: POST /ack {id, session=A}
@@ -138,11 +281,11 @@ sequenceDiagram
 
 To stop everything queued for the current session (e.g. the LLM said something long and you don't want to
 hear the rest), run `llm-response-tts-clear-speech`. It calls `ingress`'s `POST /clear {session}`, which
-empties that session's `pending_ids` list - so its `player` sees nothing pending on its next poll - and
+empties that session's ordering list - so its `player` sees nothing pending on its next poll - and
 bumps that session's epoch counter in Redis so any job a worker already popped and is mid-synthesis for
 this session gets silently discarded instead of writing a wav nobody will ever ask for; other sessions'
 queued jobs are untouched. `llm-response-tts-clear-all-speech` is the blunter version: it calls
-`POST /clear-all`, which does the same for every known session at once (draining the shared `work_queue`
+`POST /clear-all`, which does the same for every known session at once (draining the shared work queue
 too), for when you want silence across the board rather than just your current project. Neither command
 interrupts whatever's playing on the host right now, only what would've come after it; `player` blocks
 until playback finishes before its next poll, so cutting off mid-sentence would need a different design.
