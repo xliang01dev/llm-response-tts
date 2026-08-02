@@ -1,7 +1,10 @@
-# text-to-speech
+# LLM Text to Voice
 
-Speaks Claude Code's responses out loud using [kokoros](https://github.com/lucasjinreal/kokoros) (a Rust
-implementation of Kokoro TTS), served locally in Docker, via a `MessageDisplay` hook.
+Speaks LLM agent responses out loud using [kokoros](https://github.com/lucasjinreal/kokoros) (a Rust
+implementation of Kokoro TTS), served locally in Docker. The queue, worker pool, and player are
+LLM-agnostic - any tool that can stream its response text to `ingest` can use them. This repo ships the
+integration for Claude Code's `MessageDisplay` hook out of the box; Kiro, Codex, or anything else that
+speaks LLM can wire in the same way.
 
 ## How to install
 
@@ -128,11 +131,12 @@ synthesis.
 
 ### Security audit [link](docs/security-audit.md)
 
-The architecture is designed so that what Claude says to you never has to leave your machine. `nginx` is
-the only container bound to the host, gating every request behind a bearer token and failing closed if it's
-misconfigured; kokoros, Redis, `ingress`, and `worker` all sit on an internal-only Docker network with no
-host-published port. Voice synthesis stays genuinely local as a result - kokoros makes no outbound calls at
-request time - which is also why it was chosen in the first place: a Rust implementation of Kokoro TTS run
-in-container, rather than a cloud TTS API, so privacy is a property of the design, not a vendor's promise.
+The architecture is designed so that what your LLM tool says back to you never has to leave your machine.
+`nginx` is the only container bound to the host, gating every request behind a bearer token and failing
+closed if it's misconfigured; kokoros, Redis, `ingress`, and `worker` all sit on an internal-only Docker
+network with no host-published port. Voice synthesis stays genuinely local as a result - kokoros makes no
+outbound calls at request time - which is also why it was chosen in the first place: a Rust implementation
+of Kokoro TTS run in-container, rather than a cloud TTS API, so privacy is a property of the design, not a
+vendor's promise.
 The full write-up covers the network-egress audit and what per-session isolation does and doesn't protect
 against.

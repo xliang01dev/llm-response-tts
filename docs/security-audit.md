@@ -37,10 +37,10 @@ it re-clones the build context and re-pulls base images - drop `--build` for rou
 network activity limited to true first-time setup.
 
 Per-session isolation (see [Session isolation](architecture.md#session-isolation)) is an organizational and
-UX boundary, not a security one: it keeps concurrent Claude Code sessions' audio and queues from interfering
-with each other, but every session still authenticates with the same shared
-`LLM_RESPONSE_TTS_BEARER_TOKEN` against the same `ingress` instance. A session hash is derived from a
-directory path, not a secret, and isn't meant to be one - anyone who can reach `ingress` (i.e. anyone with
+UX boundary, not a security one: it keeps concurrent sessions' audio and queues from interfering with each
+other, regardless of which LLM tool each one belongs to, but every session still authenticates with the
+same shared `LLM_RESPONSE_TTS_BEARER_TOKEN` against the same `ingress` instance. A session hash is derived
+from a directory path, not a secret, and isn't meant to be one - anyone who can reach `ingress` (i.e. anyone with
 the bearer token) can address, enqueue into, or clear any other session's queue simply by supplying its
 hash. That's an acceptable trade-off for a single-user local deployment where the token itself is already
 the trust boundary, but it means session hashes shouldn't be treated as access control if this is ever

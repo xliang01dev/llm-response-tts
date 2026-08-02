@@ -25,7 +25,7 @@
 ```mermaid
 graph LR
     subgraph Host["Host machine"]
-        CC["Claude Code<br/>(session A cwd)"] -->|"MessageDisplay hook"| I["ingest"]
+        CC["LLM tool<br/>(session A cwd)"] -->|"stream text"| I["ingest"]
         I -.spawns.-> P["player<br/>(session A)"]
         CS["clear-speech<br/>(session A)"]
         CAS["clear-all-speech"]
@@ -50,7 +50,7 @@ graph LR
 
 ## Session isolation
 
-Every Claude Code session (in practice, every distinct project `cwd` the hook fires from) gets its own
+Every calling session (in practice, every distinct project `cwd` the hook fires from) gets its own
 queue, output directory, and `player` process, so multiple sessions open at once never mix up each other's
 wav files or playback order. `ingest` and `player` each derive a `session-hash` from `cwd` - a 32-bit
 MurmurHash3 of the absolute path, base62-encoded to a fixed 6 characters - deterministically and without any
@@ -65,11 +65,11 @@ for no behavioral benefit.
 
 ## Message queueing
 
-Claude Code can emit several messages back-to-back - sometimes overlapping in time - and each one triggers
+An LLM tool can emit several messages back-to-back - sometimes overlapping in time - and each one triggers
 its own `ingest` invocation, which itself splits into multiple sentence-level jobs (see above). Either way,
 synthesis happens across 3 parallel workers, so a later sentence - from the same message or a different one
-- can easily finish before an earlier one; playback still has to happen in the order Claude actually
-generated the text, so ordering can no longer be inferred from "whichever wav file shows up first."
+- can easily finish before an earlier one; playback still has to happen in the order the text was actually
+generated, so ordering can no longer be inferred from "whichever wav file shows up first."
 
 The id `ingress` assigns via Redis `INCR` is the fix: each sentence gets one assigned once, atomically, at
 the moment it's accepted, before any parallel processing happens, so it reflects true generation order
@@ -136,7 +136,7 @@ sequenceDiagram
     end
 ```
 
-To stop everything queued for the current session (e.g. Claude said something long and you don't want to
+To stop everything queued for the current session (e.g. the LLM said something long and you don't want to
 hear the rest), run `llm-response-tts-clear-speech`. It calls `ingress`'s `POST /clear {session}`, which
 empties that session's `pending_ids` list - so its `player` sees nothing pending on its next poll - and
 bumps that session's epoch counter in Redis so any job a worker already popped and is mid-synthesis for
