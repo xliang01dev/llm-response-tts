@@ -113,6 +113,26 @@ pub fn sound_output_base() -> std::path::PathBuf {
         .unwrap_or_else(|_| std::path::PathBuf::from("/tmp/llm-response-tts/output"))
 }
 
+// Minimal hand-rolled HTTP/1.1 POST (nginx on 127.0.0.1:3000) - kept dependency-free (no HTTP
+// client crate) since the target and request shape never vary. Shared by ingest, clear-speech,
+// and clear-all-speech - see module comment for why player keeps its own copy instead.
+pub fn http_post(path: &str, token: &str, body: &str) -> std::io::Result<String> {
+    use std::io::{Read, Write};
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", 3000))?;
+    let request = format!(
+        "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:3000\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    stream.write_all(request.as_bytes())?;
+    let mut response = String::new();
+    stream.read_to_string(&mut response)?;
+    Ok(response)
+}
+
+pub fn http_status_line(response: &str) -> &str {
+    response.lines().next().unwrap_or("")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

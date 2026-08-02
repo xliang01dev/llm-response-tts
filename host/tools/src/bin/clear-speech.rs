@@ -4,23 +4,11 @@
 // playback finishes; stopping mid-sentence would need a different, more invasive design). Use
 // clear-all-speech instead to clear every session, not just this one.
 // Rebuild after editing: cargo build --release --manifest-path host/Cargo.toml
-use llm_response_tts_tools::common::{read_env_var, script_dir, session_key};
-use std::io::{Read, Write};
-use std::net::TcpStream;
+use llm_response_tts_tools::common::{http_post, http_status_line, read_env_var, script_dir, session_key};
 
 fn clear(token: &str, session: &str) -> std::io::Result<String> {
     let body = format!("{{\"session\":\"{session}\"}}");
-    let mut stream = TcpStream::connect(("127.0.0.1", 3000))?;
-    let request = format!(
-        "POST /clear HTTP/1.1\r\nHost: 127.0.0.1:3000\r\nAuthorization: Bearer {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        token,
-        body.len(),
-        body
-    );
-    stream.write_all(request.as_bytes())?;
-    let mut response = String::new();
-    stream.read_to_string(&mut response)?;
-    Ok(response)
+    http_post("/clear", token, &body)
 }
 
 fn main() {
@@ -30,11 +18,11 @@ fn main() {
     let (session_hash, _) = session_key();
 
     match clear(&token, &session_hash) {
-        Ok(response) if response.lines().next().unwrap_or("").contains(" 204 ") => {
+        Ok(response) if http_status_line(&response).contains(" 204 ") => {
             println!("cleared pending speech for this session");
         }
         Ok(response) => {
-            eprintln!("clear failed: {}", response.lines().next().unwrap_or(""));
+            eprintln!("clear failed: {}", http_status_line(&response));
             std::process::exit(1);
         }
         Err(e) => {

@@ -2,9 +2,8 @@
 // deltas per message_id, and on the final delta POSTs the full text to the ingress service
 // (through nginx) so it lands on the Redis work queue for the worker containers.
 // Rebuild after editing: cargo build --release --manifest-path host/Cargo.toml
-use llm_response_tts_tools::common::{read_env_var, script_dir, session_key};
+use llm_response_tts_tools::common::{http_post, http_status_line, read_env_var, script_dir, session_key};
 use std::io::{Read, Write};
-use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
@@ -247,8 +246,6 @@ fn json_escape(s: &str) -> String {
     out
 }
 
-// Minimal hand-rolled HTTP/1.1 POST (nginx on 127.0.0.1:3000) - kept dependency-free (no
-// HTTP client crate) since the target and request shape never vary.
 fn post_text(token: &str, text: &str, session: &str, session_dir: &str) -> std::io::Result<()> {
     let body = format!(
         "{{\"text\":\"{}\",\"session\":\"{}\",\"session_dir\":\"{}\"}}",
@@ -256,18 +253,8 @@ fn post_text(token: &str, text: &str, session: &str, session_dir: &str) -> std::
         json_escape(session),
         json_escape(session_dir)
     );
-    let mut stream = TcpStream::connect(("127.0.0.1", 3000))?;
-    let request = format!(
-        "POST / HTTP/1.1\r\nHost: 127.0.0.1:3000\r\nContent-Type: application/json\r\nContent-Length: {}\r\nAuthorization: Bearer {}\r\nConnection: close\r\n\r\n{}",
-        body.len(),
-        token,
-        body
-    );
-    stream.write_all(request.as_bytes())?;
-
-    let mut response = String::new();
-    stream.read_to_string(&mut response)?;
-    let status_line = response.lines().next().unwrap_or("");
+    let response = http_post("/", token, &body)?;
+    let status_line = http_status_line(&response);
     if !(status_line.contains(" 200 ") || status_line.contains(" 202 ")) {
         eprintln!("ingest: enqueue failed: {status_line}");
     }
