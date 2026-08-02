@@ -69,19 +69,16 @@ doing, for anyone who wants to run or customize them individually.
 
 **Host binaries** (built from the `host/` Cargo workspace, run directly on your machine, not in Docker):
 
-| Binary | Installed as | What it does |
-| --- | --- | --- |
-| `ingest` | `llm-response-tts-ingest` | `MessageDisplay` hook entrypoint: buffers streamed deltas, splits into sentences, enqueues each one |
-| `clear-speech` | `llm-response-tts-clear-speech` | Drops everything queued for the calling session (see "Session isolation") |
-| `clear-all-speech` | `llm-response-tts-clear-all-speech` | Drops everything queued across every session |
-| `player` | `llm-response-tts-player` | Plays back one session's synthesized wav files in order |
+| Binary | Installed as | What it does | Crate dependencies |
+| --- | --- | --- | --- |
+| `ingest` | `llm-response-tts-ingest` | `MessageDisplay` hook entrypoint: buffers streamed deltas, splits into sentences, enqueues each one | none |
+| `clear-speech` | `llm-response-tts-clear-speech` | Drops everything queued for the calling session (see "Session isolation") | none |
+| `clear-all-speech` | `llm-response-tts-clear-all-speech` | Drops everything queued across every session | none |
+| `player` | `llm-response-tts-player` | Plays back one session's synthesized wav files in order | `rodio`, `ureq` |
 
-`ingest`, `clear-speech`, and `clear-all-speech` share `host/tools/src/common.rs`; `player` is a separate
-package with its own dependencies (`rodio`, `ureq`). All four are meant to run from *any* project's
-directory, so each bakes this repo's location into the binary at **compile time** via
-`env!("CARGO_MANIFEST_DIR")`, letting them find *this* repo's `docker/.env` regardless of which project's
-`cwd` the hook fires from - re-run `cargo install` (step 3 above) after moving the repo. `ingest` always
-spawns `player` from `$CARGO_HOME/bin` (falling back to `~/.cargo/bin`); there's no separate dev-build path.
+All four bake this repo's location into the binary at **compile time** via `env!("CARGO_MANIFEST_DIR")`, so
+they find *this* repo's `docker/.env` regardless of which project's `cwd` the hook fires from - re-run
+`cargo install` (step 3 above) after moving the repo.
 
 **Docker services** (built into images, run via `docker-compose.yml`):
 
