@@ -93,7 +93,7 @@ config template and bearer-token startup check, plus the gitignored `.env` holdi
 
 | Path | What lives there |
 | --- | --- |
-| `tmp/` (repo-local, gitignored) | Message buffers and the last-message dedupe marker; safe to delete while idle |
+| `/tmp/llm-response-tts/buffer/<session>/` | Per-session message delta buffers and the last-message dedupe marker; safe to delete while idle |
 | `LLM_RESPONSE_TTS_SOUND_OUTPUT/<session>/` | Synthesized `.wav` files, one subdirectory per session |
 | `/tmp/llm-response-tts/lock/<session>.lock/` | One lock dir per session (with a `pid` file), held by that session's running `player` |
 
@@ -120,8 +120,8 @@ of these are split per session.
   delta arrives, it splits the full text into sentences (on `.`/`!`/`?`/`:`, only when followed by
   whitespace or end of text, so decimals and no-space abbreviations stay intact) and POSTs each one
   separately to nginx (`127.0.0.1:3000`, with the bearer token), which forwards it to the `ingress` service
-  - so a long message becomes several small jobs instead of one big one. It also dedupes on
-  `tmp/ingest-last-message.txt` so the same message isn't spoken twice. Each POST also carries the calling
+  - so a long message becomes several small jobs instead of one big one. It also dedupes on that session's
+  own `ingest-last-message.txt` so the same message isn't spoken twice. Each POST also carries the calling
   session's hash and output directory (see "Session isolation" below).
 - `ingress` assigns each sentence its own monotonically increasing id (via Redis `INCR`, shared globally
   across all sessions - see "Session isolation" for why a global counter is fine) and pushes it onto a
@@ -210,7 +210,7 @@ too), it gives up, acks it anyway, and moves on - so one dead job can't stall ev
 nothing pending at all for 10 seconds, `player` exits.
 
 Keeping this state server-side instead of in a local watermark file removes a whole category of bugs: a
-local file can drift from what Redis actually has queued (e.g. if `tmp/` gets wiped while Redis keeps
+local file can drift from what Redis actually has queued (e.g. if `/tmp` gets wiped while Redis keeps
 counting, or Redis restarts while the local file doesn't) - `pending_ids` can't drift from itself.
 
 Only one `player` may run per session, enforced with `mkdir /tmp/llm-response-tts/lock/<session-dir>.lock`

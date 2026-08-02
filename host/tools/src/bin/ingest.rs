@@ -276,7 +276,14 @@ fn post_text(token: &str, text: &str, session: &str, output_dir: &str) -> std::i
 
 fn run() -> std::io::Result<()> {
     let script_dir = script_dir();
-    let out_dir = script_dir.join("tmp");
+    // Session-scoped (not repo-local): this binary is installed once globally and can be
+    // invoked concurrently by Claude Code sessions in unrelated projects, each with their own
+    // cwd. A single shared buffer dir would let one session's dedupe marker or delta buffer
+    // get clobbered by another's. Fixed under /tmp/llm-response-tts (not
+    // LLM_RESPONSE_TTS_SOUND_OUTPUT) for the same reason the per-session lock dir is - it
+    // should stay predictable even if that env var is reconfigured.
+    let (session_hash, session_dir_name) = session_key();
+    let out_dir = PathBuf::from("/tmp/llm-response-tts/buffer").join(&session_dir_name);
     std::fs::create_dir_all(&out_dir)?;
 
     let mut input = String::new();
@@ -318,7 +325,6 @@ fn run() -> std::io::Result<()> {
 
     let env_file = script_dir.join("docker").join(".env");
     let token = read_env_var(&env_file, "LLM_RESPONSE_TTS_BEARER_TOKEN").unwrap_or_default();
-    let (session_hash, session_dir_name) = session_key();
     let output_dir = sound_output_base().join(&session_dir_name);
     let output_dir_str = output_dir.to_string_lossy().to_string();
     for sentence in split_sentences(&text) {
