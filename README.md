@@ -76,10 +76,6 @@ doing, for anyone who wants to run or customize them individually.
 | `clear-all-speech` | `llm-response-tts-clear-all-speech` | Drops everything queued across every session | none |
 | `player` | `llm-response-tts-player` | Plays back one session's synthesized wav files in order | `rodio`, `ureq` |
 
-All four bake this repo's location into the binary at **compile time** via `env!("CARGO_MANIFEST_DIR")`, so
-they find *this* repo's `docker/.env` regardless of which project's `cwd` the hook fires from - re-run
-`cargo install` (step 3 above) after moving the repo.
-
 **Docker services** (built into images, run via `docker-compose.yml`):
 
 | Service | Replicas | What it does |
@@ -106,17 +102,17 @@ of these are split per session.
 
 ## Env variables
 
-| Name | What it represents | Default |
-| --- | --- | --- |
-| `LLM_RESPONSE_TTS_BEARER_TOKEN` | Shared secret nginx requires on every request (`Authorization: Bearer <token>`); read from `docker/.env` by `ingest`, `clear-speech`, `clear-all-speech`, and `player` | none - generated into `docker/.env` by `setup.sh` (`openssl rand -hex 32`); nginx refuses to start without it |
-| `LLM_RESPONSE_TTS_SOUND_OUTPUT` | Parent directory for synthesized wav files; a fixed system path (not repo-relative) so `worker` and `player` agree without coordination. Each session writes/reads under its own `<session-hash>-<name>/` subdirectory of this path - see "Session isolation" | `/tmp/llm-response-tts/output` |
-| `CARGO_HOME` | Not project-specific - cargo's own install root. `ingest` reads it to find where `player` was installed (`$CARGO_HOME/bin/llm-response-tts-player`) | `~/.cargo` (cargo's own default when unset) |
-| `REDIS_URL` | Redis connection string, used by `ingress` and `worker` | `redis://redis:6379` |
-| `KOKOROS_URL` | kokoros TTS server URL, used by `worker` | `http://kokoros:3000` |
-| `KOKOROS_VOICE` | Voice model used for synthesis | `af_heart` |
-| `WORD_REFS_PATH` | Path *inside the worker container* to the word-reference substitutions JSON | `/app/word-references.json` |
-| `STRIP_CHARS_PATH` | Path *inside the worker container* to the strip-characters JSON | `/app/strip-characters.json` |
-| `UNITS_PATH` | Path *inside the worker container* to the measurement-units JSON | `/app/measurement-units.json` |
+| Name | Set in | What it represents | Default |
+| --- | --- | --- | --- |
+| `LLM_RESPONSE_TTS_BEARER_TOKEN` | `docker/.env` (created by `setup.sh`, or manually) | Shared secret nginx requires on every request (`Authorization: Bearer <token>`); read by `ingest`, `clear-speech`, `clear-all-speech`, and `player` | none - nginx refuses to start without it |
+| `LLM_RESPONSE_TTS_SOUND_OUTPUT` | Host shell env (optional) | Parent directory for synthesized wav files; each session writes/reads under its own `<session-hash>-<name>/` subdirectory - see "Session isolation" | `/tmp/llm-response-tts/output` |
+| `CARGO_HOME` | Host shell env (optional) | cargo's own install root; `ingest` reads it to find where `player` was installed | `~/.cargo` (cargo's own default when unset) |
+| `REDIS_URL` | `docker-compose.yml` (`ingress`, `worker`) | Redis connection string | `redis://redis:6379` |
+| `KOKOROS_URL` | `docker-compose.yml` (`worker`) | kokoros TTS server URL | `http://kokoros:3000` |
+| `KOKOROS_VOICE` | `docker-compose.yml` (`worker`) | Voice model used for synthesis | `af_heart` |
+| `WORD_REFS_PATH` | `docker-compose.yml` (`worker`, not set by default) | Path *inside the worker container* to the word-reference substitutions JSON | `/app/word-references.json` |
+| `STRIP_CHARS_PATH` | `docker-compose.yml` (`worker`, not set by default) | Path *inside the worker container* to the strip-characters JSON | `/app/strip-characters.json` |
+| `UNITS_PATH` | `docker-compose.yml` (`worker`, not set by default) | Path *inside the worker container* to the measurement-units JSON | `/app/measurement-units.json` |
 
 ## Architecture
 
