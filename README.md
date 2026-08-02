@@ -113,15 +113,24 @@ See [architecture](docs/architecture.md) for why sound output lives outside the 
 | `STRIP_CHARS_PATH` | `docker-compose.yml` (`worker`, not set by default) | Path *inside the worker container* to the strip-characters JSON | `/app/strip-characters.json` |
 | `UNITS_PATH` | `docker-compose.yml` (`worker`, not set by default) | Path *inside the worker container* to the measurement-units JSON | `/app/measurement-units.json` |
 
-## More docs
+## Supporting documentation
 
-[**Available voices**](docs/voices.md) - the full list of voice names kokoros accepts, beyond the handful
-mentioned in "Customizing" above, plus where to look if you need one that isn't listed there.
+### [Available voices](docs/voices.md)
 
-[**Architecture**](docs/architecture.md) - how a message flows from the hook through `ingest`, `ingress`,
-the `worker` pool, and `player`, including diagrams, the per-session isolation design, and how playback
-ordering is kept correct despite parallel synthesis.
+The full list of voice names kokoros accepts, beyond the handful mentioned in "Customizing" above, plus
+where to look if you need one that isn't listed there.
 
-[**Security audit**](docs/security-audit.md) - what's exposed on the host, how the bearer token is enforced
-and fails closed, what network egress this project has, and the trust boundary session isolation does (and
-doesn't) provide.
+### [Architecture](docs/architecture.md)
+
+How a message flows from the hook through `ingest`, `ingress`, the `worker` pool, and `player`, including
+diagrams, the per-session isolation design, and how playback ordering is kept correct despite parallel
+synthesis.
+
+### [Security audit](docs/security-audit.md)
+
+Why the pipeline is architected the way it is: nginx as the single bearer-token-gated entry point with
+everything else confined to an internal-only Docker network, so nothing but that one gate is ever exposed
+on the host. Covers how that design keeps voice synthesis genuinely local - no audio or text ever leaves
+the machine - and why kokoros (a Rust implementation of Kokoro TTS) was chosen over a cloud TTS API in the
+first place: it runs the model in-container with no outbound calls at runtime, so privacy comes from the
+architecture itself rather than a provider's promise.
