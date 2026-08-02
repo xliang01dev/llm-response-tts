@@ -338,7 +338,7 @@ fn run() -> std::io::Result<()> {
     // inherit the parent's cwd by default, and ours is wherever the hook fired from, which is
     // exactly the cwd this ingest run computed session_hash from too, so the two agree without
     // an explicit handoff. player enforces its own per-session single-instance lock on startup
-    // (mkdir /tmp/llm-response-tts/<session-dir>/player.lock), so it's safe to always attempt a
+    // (mkdir /tmp/llm-response-tts/lock/<session-dir>.lock), so it's safe to always attempt a
     // spawn here - a redundant one just exits immediately.
     let cargo_home = std::env::var("CARGO_HOME").map(PathBuf::from).unwrap_or_else(|_| {
         let home = std::env::var("HOME").map(PathBuf::from).unwrap_or_else(|_| script_dir.clone());

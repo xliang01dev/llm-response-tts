@@ -167,10 +167,12 @@ config template and bearer-token startup check, plus the gitignored `.env` holdi
   (`<session-hash>-<cwd-last-component>/`), written by `worker` and consumed by that session's own `player`.
   See "Architecture" below for why this lives outside the repo instead of under `tmp/`, and "Session
   isolation" for why it's split per session.
-- `/tmp/llm-response-tts/<session-hash>-<cwd-last-component>/player.lock` — one lock directory per session,
-  held by that session's running `player` for as long as it's alive. Always under `/tmp/llm-response-tts`
-  directly, regardless of where `LLM_RESPONSE_TTS_SOUND_OUTPUT` points, so lock locations stay predictable
-  even if that env var is reconfigured.
+- `/tmp/llm-response-tts/lock/<session-hash>-<cwd-last-component>.lock` — one lock directory per session
+  (containing a `pid` file), held by that session's running `player` for as long as it's alive. All
+  sessions' locks live together here so `ls /tmp/llm-response-tts/lock` shows every session with a
+  live-or-stale lock at a glance. Always under `/tmp/llm-response-tts` directly, regardless of where
+  `LLM_RESPONSE_TTS_SOUND_OUTPUT` points, so lock locations stay predictable even if that env var is
+  reconfigured.
 
 ## Env variables
 
@@ -285,7 +287,7 @@ Keeping this state server-side instead of in a local watermark file removes a wh
 local file can drift from what Redis actually has queued (e.g. if `tmp/` gets wiped while Redis keeps
 counting, or Redis restarts while the local file doesn't) — `pending_ids` can't drift from itself.
 
-Only one `player` may run per session, enforced with `mkdir /tmp/llm-response-tts/<session-dir>/player.lock`
+Only one `player` may run per session, enforced with `mkdir /tmp/llm-response-tts/lock/<session-dir>.lock`
 (see "Session isolation" above): `mkdir` is atomic at the filesystem level, so if two `ingest` invocations
 for the same session race to create it, exactly one spawns that session's player; the rest just enqueue
 their message and trust the already-running player to reach it in order. A different session's lock lives

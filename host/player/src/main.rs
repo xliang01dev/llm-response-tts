@@ -225,10 +225,13 @@ fn main() {
 
     let output_dir = sound_output_base().join(&session_dir_name);
     // Fixed system base, not under LLM_RESPONSE_TTS_SOUND_OUTPUT - lock location should stay
-    // predictable even if that env var is ever reconfigured to point somewhere else.
+    // predictable even if that env var is ever reconfigured to point somewhere else. All
+    // sessions' locks live together under one lock/ folder (rather than nested inside each
+    // session's own dir) so `ls /tmp/llm-response-tts/lock` alone shows every session with a
+    // live-or-stale player lock, without having to know each session's hash up front.
     let lock_dir = PathBuf::from("/tmp/llm-response-tts")
-        .join(&session_dir_name)
-        .join("player.lock");
+        .join("lock")
+        .join(format!("{session_dir_name}.lock"));
 
     let _ = std::fs::create_dir_all(&output_dir);
     if let Some(parent) = lock_dir.parent() {
