@@ -200,9 +200,22 @@ fn ack(token: &str, session: &str, id: i64) {
     }
 }
 
-fn play_wav(mixer: &rodio::mixer::Mixer, path: &Path) -> Result<(), Box<dyn Error>> {
+// rodio's set_speed is a playback-rate multiplier, not a pitch-preserving tempo change - 2.0
+// plays twice as fast *and* an octave-ish higher, same trade-off as speeding up a tape. A host
+// shell env var, like LLM_RESPONSE_TTS_SOUND_OUTPUT above - docker/.env is Docker services'
+// config, not a general host-binary settings file.
+fn playback_speed() -> f32 {
+    std::env::var("LLM_RESPONSE_TTS_PLAYBACK_SPEED")
+        .ok()
+        .and_then(|s| s.parse::<f32>().ok())
+        .filter(|&v| v > 0.0)
+        .unwrap_or(1.0)
+}
+
+fn play_wav(mixer: &rodio::mixer::Mixer, path: &Path, speed: f32) -> Result<(), Box<dyn Error>> {
     let file = BufReader::new(File::open(path)?);
     let player = rodio::stream::play(mixer, file)?;
+    player.set_speed(speed);
     player.sleep_until_end();
     Ok(())
 }
@@ -243,6 +256,7 @@ fn main() {
     };
 
     let token = read_env_var(&env_file, "LLM_RESPONSE_TTS_BEARER_TOKEN").unwrap_or_default();
+    let speed = playback_speed();
 
     let sink = match DeviceSinkBuilder::open_default_sink() {
         Ok(s) => s,
@@ -271,7 +285,7 @@ fn main() {
                 let wav_path = output_dir.join(&job.filename);
 
                 if job.status == "COMPLETE" && wav_path.is_file() {
-                    if let Err(e) = play_wav(mixer, &wav_path) {
+                    if let Err(e) = play_wav(mixer, &wav_path, speed) {
                         eprintln!("player: playback failed for {}: {e}", job.filename);
                     }
                     let _ = std::fs::remove_file(&wav_path);

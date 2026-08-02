@@ -44,17 +44,43 @@ fn session_key_dir_name_starts_with_the_hash() {
     assert!(dir_name.starts_with(&format!("{hash}-")));
 }
 
-// --- Lock ---
-
-fn unique_lock_dir(label: &str) -> PathBuf {
+fn unique_temp_path(label: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     std::env::temp_dir().join(format!("llm-response-tts-player-test-{}-{label}-{n}", std::process::id()))
 }
 
+// --- playback_speed ---
+//
+// Mutates the process-wide LLM_RESPONSE_TTS_PLAYBACK_SPEED env var - safe here specifically
+// because this is the only test in this binary that reads or writes it, so there's nothing
+// else for it to race with regardless of how the test harness interleaves threads.
+
+#[test]
+fn playback_speed_cases() {
+    let cases = [
+        (Some("1.5"), 1.5),
+        (Some("0.75"), 0.75),
+        (None, 1.0),                 // env var unset - default
+        (Some("not-a-number"), 1.0), // unparseable - default
+        (Some("0"), 1.0),            // zero rejected - default
+        (Some("-1"), 1.0),           // negative rejected - default
+    ];
+    for (value, expected) in cases {
+        match value {
+            Some(v) => unsafe { std::env::set_var("LLM_RESPONSE_TTS_PLAYBACK_SPEED", v) },
+            None => unsafe { std::env::remove_var("LLM_RESPONSE_TTS_PLAYBACK_SPEED") },
+        }
+        assert_eq!(playback_speed(), expected, "value={value:?}");
+    }
+    unsafe { std::env::remove_var("LLM_RESPONSE_TTS_PLAYBACK_SPEED") };
+}
+
+// --- Lock ---
+
 #[test]
 fn lock_acquire_main_flow_then_releases_on_drop() {
-    let dir = unique_lock_dir("basic");
+    let dir = unique_temp_path("basic");
     {
         let lock = Lock::acquire(dir.clone());
         assert!(lock.is_some());
@@ -66,7 +92,7 @@ fn lock_acquire_main_flow_then_releases_on_drop() {
 
 #[test]
 fn lock_acquire_fails_while_held_by_a_live_process() {
-    let dir = unique_lock_dir("held");
+    let dir = unique_temp_path("held");
     let _first = Lock::acquire(dir.clone()).expect("first acquire should succeed");
     // second attempt in the same process - the pid file records our own (very much alive) pid
     assert!(Lock::acquire(dir.clone()).is_none());
@@ -74,7 +100,7 @@ fn lock_acquire_fails_while_held_by_a_live_process() {
 
 #[test]
 fn lock_acquire_reclaims_a_stale_lock_left_by_a_dead_process() {
-    let dir = unique_lock_dir("stale");
+    let dir = unique_temp_path("stale");
     std::fs::create_dir_all(&dir).unwrap();
     // guaranteed-dead pid: spawn a process and wait for it to exit before using its pid
     let mut child = std::process::Command::new("true").spawn().expect("spawn short-lived process");
