@@ -172,8 +172,8 @@ enum PollResult {
     Transient,
 }
 
-fn fetch_next(token: &str) -> PollResult {
-    let result = ureq::get(format!("{BASE_URL}/next"))
+fn fetch_next(token: &str, session: &str) -> PollResult {
+    let result = ureq::get(format!("{BASE_URL}/next?session={session}"))
         .header("Authorization", &format!("Bearer {token}"))
         .call();
     match result {
@@ -186,10 +186,10 @@ fn fetch_next(token: &str) -> PollResult {
     }
 }
 
-fn ack(token: &str, id: i64) {
+fn ack(token: &str, session: &str, id: i64) {
     let result = ureq::post(format!("{BASE_URL}/ack"))
         .header("Authorization", &format!("Bearer {token}"))
-        .send_json(serde_json::json!({ "id": id }));
+        .send_json(serde_json::json!({ "id": id, "session": session }));
     match result {
         Ok(resp) if resp.status() == 204 => {}
         Ok(resp) => eprintln!(
@@ -208,6 +208,8 @@ fn play_wav(mixer: &rodio::mixer::Mixer, path: &Path) -> Result<(), Box<dyn Erro
 }
 
 fn main() {
+    let (session_hash, session_dir_name) = session_key();
+
     // This binary is installed outside the repo (see ingest's spawn comment for why), and can
     // be spawned while Claude Code's cwd is some *other* project entirely - not this repo - so
     // the root can't come from cwd or the exe's own path either. Baked in at compile time
@@ -219,21 +221,22 @@ fn main() {
         .and_then(|p| p.parent())
         .expect("CARGO_MANIFEST_DIR has unexpected shape")
         .to_path_buf();
-    let out_dir = script_dir.join("tmp");
-    // Fixed system path, not repo-relative like the rest of script_dir's uses below - worker
-    // (in its container) and player (on the host) both default to the same literal path
-    // independently, so they agree on where wav files are without any coordination, and
-    // docker-compose.yml bind-mounts the host path at that identical path in the container.
-    let output_dir = std::env::var("LLM_RESPONSE_TTS_SOUND_OUTPUT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/tmp/llm-response-tts/output"));
-    let lock_dir = out_dir.join("worker.lock");
     let env_file = script_dir.join("docker").join(".env");
 
+    let output_dir = sound_output_base().join(&session_dir_name);
+    // Fixed system base, not under LLM_RESPONSE_TTS_SOUND_OUTPUT - lock location should stay
+    // predictable even if that env var is ever reconfigured to point somewhere else.
+    let lock_dir = PathBuf::from("/tmp/llm-response-tts")
+        .join(&session_dir_name)
+        .join("player.lock");
+
     let _ = std::fs::create_dir_all(&output_dir);
+    if let Some(parent) = lock_dir.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
 
     let Some(_lock) = Lock::acquire(lock_dir) else {
-        return; // lock held by a live process - nothing to do
+        return; // lock held by a live process for this session - nothing to do
     };
 
     let token = read_env_var(&env_file, "LLM_RESPONSE_TTS_BEARER_TOKEN").unwrap_or_default();
@@ -251,7 +254,7 @@ fn main() {
     let mut waited = Duration::ZERO;
 
     while idle < IDLE_EXIT {
-        match fetch_next(&token) {
+        match fetch_next(&token, &session_hash) {
             PollResult::Empty => {
                 idle += POLL_INTERVAL;
                 waited = Duration::ZERO;
@@ -269,7 +272,7 @@ fn main() {
                         eprintln!("player: playback failed for {}: {e}", job.filename);
                     }
                     let _ = std::fs::remove_file(&wav_path);
-                    ack(&token, job.id);
+                    ack(&token, &session_hash, job.id);
                     waited = Duration::ZERO;
                     continue;
                 }
@@ -280,7 +283,7 @@ fn main() {
                 waited += POLL_INTERVAL;
                 if waited >= MAX_WAIT {
                     eprintln!("player: id {} still not playable after {:?}, skipping", job.id, waited);
-                    ack(&token, job.id);
+                    ack(&token, &session_hash, job.id);
                     waited = Duration::ZERO;
                     continue;
                 }
