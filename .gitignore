@@ -3,3 +3,4 @@
 docker/.env
 services/target/
 host/target/
+docs/superpowers/
