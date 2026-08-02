@@ -6,16 +6,21 @@ use std::path::{Path, PathBuf};
 
 const STATUS_TTL_SECS: u64 = 3600;
 const WORK_QUEUE_KEY: &str = "llm-response-tts:work_queue";
-const EPOCH_KEY: &str = "llm-response-tts:epoch";
 
 fn status_key(id: i64) -> String {
     format!("llm-response-tts:status:{id}")
+}
+
+fn epoch_key(session: &str) -> String {
+    format!("llm-response-tts:epoch:{session}")
 }
 
 #[derive(Deserialize)]
 struct QueuedJob {
     id: i64,
     text: String,
+    session: String,
+    output_dir: String,
     epoch: i64,
 }
 
@@ -237,12 +242,9 @@ async fn main() {
     let redis_url = env_or("REDIS_URL", "redis://redis:6379");
     let kokoros_url = env_or("KOKOROS_URL", "http://kokoros:3000");
     let voice = env_or("KOKOROS_VOICE", "af_heart");
-    let output_dir = PathBuf::from(env_or("LLM_RESPONSE_TTS_SOUND_OUTPUT", "/tmp/llm-response-tts/output"));
     let word_refs_path = env_or("WORD_REFS_PATH", "/app/word-references.json");
     let strip_chars_path = env_or("STRIP_CHARS_PATH", "/app/strip-characters.json");
     let units_path = env_or("UNITS_PATH", "/app/measurement-units.json");
-
-    std::fs::create_dir_all(&output_dir).expect("failed to create output dir");
 
     let refs = load_word_references(&word_refs_path);
     let strip_set = load_strip_chars(&strip_chars_path);
@@ -276,9 +278,14 @@ async fn main() {
         let text = apply_transform(&job.text, &units, &refs, &strip_set);
         match synthesize(&http, &kokoros_url, &voice, &text).await {
             Ok(bytes) => {
-                let current_epoch: i64 = conn.get(EPOCH_KEY).await.unwrap_or(None).unwrap_or(0);
+                let current_epoch: i64 = conn.get(epoch_key(&job.session)).await.unwrap_or(None).unwrap_or(0);
                 if current_epoch != job.epoch {
                     tracing::info!("id {} cleared mid-job (epoch {} -> {}), discarding", job.id, job.epoch, current_epoch);
+                    continue;
+                }
+                let output_dir = PathBuf::from(&job.output_dir);
+                if let Err(e) = std::fs::create_dir_all(&output_dir) {
+                    tracing::error!("failed to create output dir {} for id {}: {e}", job.output_dir, job.id);
                     continue;
                 }
                 if let Err(e) = write_output(&output_dir, job.id, &bytes) {
