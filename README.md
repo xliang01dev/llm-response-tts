@@ -11,14 +11,15 @@ Install via Homebrew:
 brew install rust
 ```
 
-- **rust** — provides `cargo`, which builds all three host binaries (`llm-response-tts-ingest`,
-  `llm-response-tts-clear-speech`, `llm-response-tts-player`) from the `host/` Cargo workspace. Audio
-  playback is via the `rodio` crate, so no external player binary like `ffplay` is needed.
+- **rust** — provides `cargo`, which builds all four host binaries (`llm-response-tts-ingest`,
+  `llm-response-tts-clear-speech`, `llm-response-tts-clear-all-speech`, `llm-response-tts-player`) from the
+  `host/` Cargo workspace. Audio playback is via the `rodio` crate, so no external player binary like
+  `ffplay` is needed.
 - **Docker** (with Compose) — runs the kokoros TTS server plus Redis and the queue/worker services. See
   `docker-compose.yml`.
 
 Run `./setup.sh` to do all of the below in one shot — installs rust via Homebrew if missing, creates
-`docker/.env` if missing, installs all three host binaries via `cargo install`, makes sure `~/.cargo/bin`
+`docker/.env` if missing, installs all four host binaries via `cargo install`, makes sure `~/.cargo/bin`
 is actually on `PATH` (Homebrew's `rust` formula doesn't add it there the way `rustup` would), builds and
 starts the Docker stack, and verifies it actually responds to a real enqueue request before declaring
 success. If nginx was already running from a previous `setup.sh` run and ends up holding a stale connection
@@ -41,8 +42,9 @@ doing, for anyone who wants to run or customize them individually.
 
 3. Install the host-side Rust binaries (rebuild after editing the source or upgrading rustc/cargo). `host/`
    is a Cargo workspace with two members: `tools` (package `llm-response-tts-tools`, zero third-party
-   dependencies — builds `ingest` and `clear-speech`, sharing `host/tools/src/common.rs`) and `player`
-   (package `llm-response-tts-player`, real dependencies). Both are installed via `cargo install`, which
+   dependencies — builds `ingest`, `clear-speech`, and `clear-all-speech`, sharing
+   `host/tools/src/common.rs`) and `player` (package `llm-response-tts-player`, real dependencies). Both are
+   installed via `cargo install`, which
    always lands in `~/.cargo/bin` — a fixed, global location, so the hook (step 4) can reference a binary by
    name alone rather than a path tied to this specific checkout:
 
@@ -54,10 +56,10 @@ doing, for anyone who wants to run or customize them individually.
    This matters even more for `player`: it must run from the boot volume. If this repo lives on a non-boot
    volume (e.g. an external or secondary drive, as `/Volumes/...` paths do on macOS), the OS kills
    CoreAudio-linked binaries (`player` links `cpal` for audio output) executed from that volume with
-   `SIGKILL (Code Signature Invalid)` — a restriction that doesn't apply to `ingest` and `clear-speech`,
-   neither of which has such a dependency, but `cargo install` sidesteps it for all three either way since
-   `~/.cargo/bin` is always on the boot volume. See "What it installs" below for the full picture, including
-   the separate dev-build path for `player`.
+   `SIGKILL (Code Signature Invalid)` — a restriction that doesn't apply to `ingest`, `clear-speech`, or
+   `clear-all-speech`, none of which has such a dependency, but `cargo install` sidesteps it for all four
+   either way since `~/.cargo/bin` is always on the boot volume. See "What it installs" below for the full
+   picture, including the separate dev-build path for `player`.
 
 4. Wire the hook in `.claude/settings.json` (project-level, already included in this repo):
 
@@ -108,28 +110,31 @@ doing, for anyone who wants to run or customize them individually.
 
 ## What it installs
 
-**Three host binaries**, built from the `host/` Cargo workspace and run directly on your machine (not in
+**Four host binaries**, built from the `host/` Cargo workspace and run directly on your machine (not in
 Docker):
 
 - `ingest` (`host/tools/src/bin/ingest.rs`, installed as `llm-response-tts-ingest`) — the `MessageDisplay`
   hook entrypoint.
 - `clear-speech` (`host/tools/src/bin/clear-speech.rs`, installed as `llm-response-tts-clear-speech`) —
-  drops everything queued.
-- `player` (`host/player/src/main.rs`, installed as `llm-response-tts-player`) — plays synthesized wav files
-  back in order.
+  drops everything queued for the calling session (see "Session isolation" below).
+- `clear-all-speech` (`host/tools/src/bin/clear-all-speech.rs`, installed as
+  `llm-response-tts-clear-all-speech`) — drops everything queued across every session.
+- `player` (`host/player/src/main.rs`, installed as `llm-response-tts-player`) — plays back one session's
+  synthesized wav files in order.
 
-`ingest` and `clear-speech` live in the `tools` package (zero third-party dependencies, share
-`host/tools/src/common.rs` via `lib.rs`). `player` is its own package (`rodio` for playback, `ureq` for
-HTTP) because it needs its own install path: all three are named `llm-response-tts-*` rather than their bare
-role names since `~/.cargo/bin` is a global directory shared with every other cargo tool on the machine —
-same reasoning as the `llm-response-tts-*` container names below.
+`ingest`, `clear-speech`, and `clear-all-speech` live in the `tools` package (zero third-party dependencies,
+share `host/tools/src/common.rs` via `lib.rs`). `player` is its own package (`rodio` for playback, `ureq`
+for HTTP) because it needs its own install path: all four are named `llm-response-tts-*` rather than their
+bare role names since `~/.cargo/bin` is a global directory shared with every other cargo tool on the machine
+— same reasoning as the `llm-response-tts-*` container names below.
 
-All three are meant to be invoked from *any* project's `MessageDisplay` hook, not just this repo's own — so
-none of them can rely on Claude Code's current working directory, or on where the installed binary file
-itself happens to sit (`~/.cargo/bin` is a fixed location shared by every cargo tool on the machine, and
-`player`'s dev build can live in `/tmp` too — see below). Instead, `ingest` and `clear-speech`
-(`host/tools/src/common.rs::script_dir()`) and `player` (its own copy in `main.rs`) each bake this repo's
-location into the binary at **compile time**, via Rust's `env!("CARGO_MANIFEST_DIR")` — the directory
+All four are meant to be invoked from *any* project's directory, not just this repo's own (`ingest` from the
+`MessageDisplay` hook, the rest by hand) — so none of them can rely on Claude Code's current working
+directory, or on where the installed binary file itself happens to sit (`~/.cargo/bin` is a fixed location
+shared by every cargo tool on the machine, and `player`'s dev build can live in `/tmp` too — see below).
+Instead, `ingest`, `clear-speech`, and `clear-all-speech` (`host/tools/src/common.rs::script_dir()`) and
+`player` (its own copy in `main.rs`) each bake this repo's location into the binary at **compile time**, via
+Rust's `env!("CARGO_MANIFEST_DIR")` — the directory
 containing that crate's own `Cargo.toml` at the moment `cargo install` builds it. That's how they always
 find *this* repo's `docker/.env` and `tmp/` correctly regardless of which project's cwd the hook actually
 fires from. Re-run `cargo install` (step 3 above) after moving the repo to a new location, so the baked-in
@@ -164,16 +169,22 @@ config template and bearer-token startup check, plus the gitignored `.env` holdi
 
 - `tmp/` (repo-local, gitignored) — message buffers and the last-message dedupe marker. Safe to delete at
   any time while idle.
-- `LLM_RESPONSE_TTS_SOUND_OUTPUT` (defaults to `/tmp/llm-response-tts/output`, outside the repo) —
-  synthesized `.wav` files, written by `worker` and consumed by `player`. See "Architecture" below for why
-  this lives outside the repo instead of under `tmp/`.
+- `LLM_RESPONSE_TTS_SOUND_OUTPUT` (defaults to `/tmp/llm-response-tts/output`, outside the repo) — parent
+  directory for synthesized `.wav` files. Each calling session gets its own subdirectory under here
+  (`<session-hash>-<cwd-last-component>/`), written by `worker` and consumed by that session's own `player`.
+  See "Architecture" below for why this lives outside the repo instead of under `tmp/`, and "Session
+  isolation" for why it's split per session.
+- `/tmp/llm-response-tts/<session-hash>-<cwd-last-component>/player.lock` — one lock directory per session,
+  held by that session's running `player` for as long as it's alive. Always under `/tmp/llm-response-tts`
+  directly, regardless of where `LLM_RESPONSE_TTS_SOUND_OUTPUT` points, so lock locations stay predictable
+  even if that env var is reconfigured.
 
 ## Env variables
 
 | Name | What it represents | Default |
 | --- | --- | --- |
-| `LLM_RESPONSE_TTS_BEARER_TOKEN` | Shared secret nginx requires on every request (`Authorization: Bearer <token>`); read from `docker/.env` by `ingest`, `clear-speech`, and `player` | none — generated into `docker/.env` by `setup.sh` (`openssl rand -hex 32`); nginx refuses to start without it |
-| `LLM_RESPONSE_TTS_SOUND_OUTPUT` | Where `worker` writes and `player` reads synthesized wav files; a fixed system path (not repo-relative) so the two agree without coordination | `/tmp/llm-response-tts/output` |
+| `LLM_RESPONSE_TTS_BEARER_TOKEN` | Shared secret nginx requires on every request (`Authorization: Bearer <token>`); read from `docker/.env` by `ingest`, `clear-speech`, `clear-all-speech`, and `player` | none — generated into `docker/.env` by `setup.sh` (`openssl rand -hex 32`); nginx refuses to start without it |
+| `LLM_RESPONSE_TTS_SOUND_OUTPUT` | Parent directory for synthesized wav files; a fixed system path (not repo-relative) so `worker` and `player` agree without coordination. Each session writes/reads under its own `<session-hash>-<name>/` subdirectory of this path — see "Session isolation" | `/tmp/llm-response-tts/output` |
 | `CARGO_HOME` | Not project-specific — cargo's own install root. `ingest` reads it to find `player`'s release install (`$CARGO_HOME/bin/llm-response-tts-player`) when no `/tmp` dev build is present | `~/.cargo` (cargo's own default when unset) |
 | `REDIS_URL` | Redis connection string, used by `ingress` and `worker` | `redis://redis:6379` |
 | `KOKOROS_URL` | kokoros TTS server URL, used by `worker` | `http://kokoros:3000` |
@@ -189,17 +200,19 @@ config template and bearer-token startup check, plus the gitignored `.env` holdi
   whitespace or end of text, so decimals and no-space abbreviations stay intact) and POSTs each one
   separately to nginx (`127.0.0.1:3000`, with the bearer token), which forwards it to the `ingress` service
   — so a long message becomes several small jobs instead of one big one. It also dedupes on
-  `tmp/ingest-last-message.txt` so the same message isn't spoken twice.
-- `ingress` assigns each sentence its own monotonically increasing id (via Redis `INCR`) and pushes it onto
-  a Redis work queue. Three `worker` containers compete for jobs off that queue in parallel, each
+  `tmp/ingest-last-message.txt` so the same message isn't spoken twice. Each POST also carries the calling
+  session's hash and output directory (see "Session isolation" below).
+- `ingress` assigns each sentence its own monotonically increasing id (via Redis `INCR`, shared globally
+  across all sessions — see "Session isolation" for why a global counter is fine) and pushes it onto a
+  Redis work queue. Three `worker` containers compete for jobs off that queue in parallel, each
   transforming the text — expanding glued number+unit tokens like `24ms` or `512Mi` into spoken words
   (`services/worker/measurement-units.json`), then word references and character stripping — and
   synthesizing it via kokoros's OpenAI-compatible `/v1/audio/speech` API, then writing the result to
-  `<id>.wav` in `LLM_RESPONSE_TTS_SOUND_OUTPUT`. Splitting by sentence is what lets one long message
+  `<id>.wav` in that job's own session output directory. Splitting by sentence is what lets one long message
   actually use all 3 workers concurrently, rather than one worker synthesizing the whole thing serially.
-- The first `ingest` invocation to see an empty worker lock spawns `player` in the background, which plays
-  wav files back in strict id order — never whichever one finishes synthesizing first — and exits after 10s
-  of nothing left to play.
+- The first `ingest` invocation for a given session to see that session's lock free spawns `player` in the
+  background, which plays that session's wav files back in strict id order — never whichever one finishes
+  synthesizing first — and exits after 10s of nothing left to play.
 - Synthesis is entirely local — kokoros runs the Kokoro-82M model in-container and doesn't make any
   outbound network calls, so no audio or text leaves the machine. Redis, `ingress`, and the `worker`
   containers are all internal-only too (no host-published ports), same as kokoros always was.
@@ -207,26 +220,46 @@ config template and bearer-token startup check, plus the gitignored `.env` holdi
 ```mermaid
 graph LR
     subgraph Host["Host machine"]
-        CC["Claude Code"] -->|"MessageDisplay hook"| I["ingest"]
-        I -.spawns.-> P["player"]
-        CS["clear-speech"]
+        CC["Claude Code<br/>(session A cwd)"] -->|"MessageDisplay hook"| I["ingest"]
+        I -.spawns.-> P["player<br/>(session A)"]
+        CS["clear-speech<br/>(session A)"]
+        CAS["clear-all-speech"]
     end
 
     subgraph Docker["Docker: llm-response-tts-net"]
         N["nginx :3000<br/>(bearer token check)"] --> IG["ingress"]
-        IG --> R[("Redis")]
+        IG --> R[("Redis<br/>(keyed per session)")]
         W["worker (x3)"] --> R
         W --> K["kokoros"]
     end
 
-    SO[("LLM_RESPONSE_TTS_SOUND_OUTPUT<br/>/tmp/llm-response-tts/output")]
+    SO[("LLM_RESPONSE_TTS_SOUND_OUTPUT/<br/>session-A-hash/*.wav")]
 
-    I -->|"POST / (bearer token)"| N
-    P -->|"GET /next, POST /ack"| N
-    CS -->|"POST /clear"| N
-    W -->|"write wav"| SO
+    I -->|"POST / (session, output_dir)"| N
+    P -->|"GET /next?session=, POST /ack"| N
+    CS -->|"POST /clear {session}"| N
+    CAS -->|"POST /clear-all"| N
+    W -->|"write wav to job's output_dir"| SO
     P -->|"read + delete wav"| SO
 ```
+
+### Session isolation
+
+Every Claude Code session (in practice, every distinct project `cwd` the hook fires from) gets its own
+queue, output directory, and `player` process, so multiple sessions open at once never mix up each other's
+wav files or playback order. `ingest` and `player` each derive a `session-hash` from `cwd` — a 32-bit
+MurmurHash3 of the absolute path, base62-encoded to a fixed 6 characters — deterministically and without any
+coordination between them, since both are computing the same hash from the same input. That hash prefixes a
+human-readable directory name (`<hash>-<cwd-last-component>`, e.g. `2wfFFn-llm-response-tts`), used for both
+the output subdirectory under `LLM_RESPONSE_TTS_SOUND_OUTPUT` and the lock directory under
+`/tmp/llm-response-tts`. Every Redis key that needs to stay independent per session (`pending_ids`, the
+epoch counter, and the set of known session hashes) is suffixed with the bare hash. The one exception is
+`next_id`, the global monotonic id counter — it stays shared across all sessions on purpose, since ids only
+need to increase, not be contiguous or session-scoped, and a shared counter is simpler than one per session
+for no behavioral benefit.
+
+Full design rationale and the Redis schema table live in
+`docs/superpowers/specs/2026-08-01-per-session-isolation-design.md`.
 
 ### Message queueing
 
@@ -239,71 +272,78 @@ generated the text, so ordering can no longer be inferred from "whichever wav fi
 The id `ingress` assigns via Redis `INCR` is the fix: each sentence gets one assigned once, atomically, at
 the moment it's accepted, before any parallel processing happens, so it reflects true generation order
 regardless of which worker later picks up the job or how long synthesis takes. That same id is also
-pushed onto a second Redis list, `llm-response-tts:pending_ids`, purely to track playback order — separate
-from `llm-response-tts:work_queue`, which is what the workers pull jobs from.
+pushed onto a per-session Redis list, `llm-response-tts:pending_ids:<session-hash>`, purely to track that
+session's playback order — separate from `llm-response-tts:work_queue`, which is shared across all sessions
+and is what the workers pull jobs from.
 
 Ordering state lives entirely in Redis, not in a local file. `player` doesn't track "the next id" on disk
-at all; it just asks `ingress` — `GET /next` peeks the front of `pending_ids` and returns
-`{"id", "filename", "status"}`, where `status` is `PROCESSING` or `COMPLETE` depending on whether a worker
-has finished writing that id's wav yet (workers report completion into Redis right after they write the
-file). `player` polls that endpoint every couple seconds; once it sees `COMPLETE`, it plays the file from
-`LLM_RESPONSE_TTS_SOUND_OUTPUT` via `rodio`, deletes it, and calls `POST /ack` to pop that id off
-`pending_ids` before moving to the next one. If an id stays `PROCESSING` for more than 45 seconds (long
-enough to cover normal CPU-bound synthesis time, since Docker on macOS has no GPU passthrough — a worker
-that's actually crashed mid-job needs this much slack too), it gives up, acks it anyway, and moves on — so
-one dead job can't stall everything behind it. With nothing pending at all for 10 seconds, `player` exits.
+at all; it just asks `ingress` — `GET /next?session=<session-hash>` peeks the front of that session's
+`pending_ids` list and returns `{"id", "filename", "status"}`, where `status` is `PROCESSING` or `COMPLETE`
+depending on whether a worker has finished writing that id's wav yet (workers report completion into Redis
+right after they write the file). `player` polls that endpoint every couple seconds; once it sees
+`COMPLETE`, it plays the file from its session's output directory via `rodio`, deletes it, and calls
+`POST /ack` (also carrying `session`) to pop that id off `pending_ids` before moving to the next one. If an
+id stays `PROCESSING` for more than 45 seconds (long enough to cover normal CPU-bound synthesis time, since
+Docker on macOS has no GPU passthrough — a worker that's actually crashed mid-job needs this much slack
+too), it gives up, acks it anyway, and moves on — so one dead job can't stall everything behind it. With
+nothing pending at all for 10 seconds, `player` exits.
 
 Keeping this state server-side instead of in a local watermark file removes a whole category of bugs: a
 local file can drift from what Redis actually has queued (e.g. if `tmp/` gets wiped while Redis keeps
 counting, or Redis restarts while the local file doesn't) — `pending_ids` can't drift from itself.
 
-Only one instance of `player` may run at a time, enforced with `mkdir tmp/worker.lock`: `mkdir` is atomic
-at the filesystem level, so if two `ingest` invocations race to create it, exactly one spawns the
-player; the rest just enqueue their message and trust the already-running player to reach it in order.
+Only one `player` may run per session, enforced with `mkdir /tmp/llm-response-tts/<session-dir>/player.lock`
+(see "Session isolation" above): `mkdir` is atomic at the filesystem level, so if two `ingest` invocations
+for the same session race to create it, exactly one spawns that session's player; the rest just enqueue
+their message and trust the already-running player to reach it in order. A different session's lock lives
+under a different directory entirely, so sessions never contend with each other for it.
 
 ```mermaid
 sequenceDiagram
-    participant H as ingest
+    participant H as ingest (session A)
     participant N as nginx
     participant I as ingress
     participant R as Redis
     participant W as worker (×3)
-    participant O as LLM_RESPONSE_TTS_SOUND_OUTPUT
-    participant P as player
+    participant O as session A output dir
+    participant P as player (session A)
 
     loop once per sentence
-        H->>N: POST / (Bearer token)
+        H->>N: POST / (session, output_dir, Bearer token)
         N->>I: proxy_pass
-        I->>R: INCR next_id, LPUSH work_queue, RPUSH pending_ids
+        I->>R: INCR next_id, LPUSH work_queue, RPUSH pending_ids:A
         I-->>H: 202 {id}
     end
 
-    par competing consumers
+    par competing consumers (any session)
         W->>R: BRPOP work_queue
         W->>W: transform + synthesize (kokoros)
-        W->>O: write <id>.wav.tmp, rename to <id>.wav
+        W->>O: write <id>.wav.tmp, rename to <id>.wav (job's own output_dir)
         W->>R: SET status:<id> COMPLETE
     end
 
     loop poll-and-play in order
-        P->>N: GET /next (Bearer token)
+        P->>N: GET /next?session=A (Bearer token)
         N->>I: proxy_pass
-        I->>R: LINDEX pending_ids 0, check status:<id>
+        I->>R: LINDEX pending_ids:A 0, check status:<id>
         I-->>P: {id, filename, status}
         P->>O: once COMPLETE, play + delete <filename>
-        P->>N: POST /ack {id}
+        P->>N: POST /ack {id, session=A}
         N->>I: proxy_pass
-        I->>R: LPOP pending_ids, DEL status:<id>
+        I->>R: LPOP pending_ids:A, DEL status:<id>
     end
 ```
 
-To stop everything queued (e.g. Claude said something long and you don't want to hear the rest), run
-`llm-response-tts-clear-speech`. It calls `ingress`'s `POST /clear`, which empties `work_queue` and
-`pending_ids` — so `player` sees nothing pending on its next poll — and bumps an epoch counter in Redis so
-any job a worker already popped and is mid-synthesis gets silently discarded instead of writing a wav
-nobody will ever ask for. This doesn't interrupt whatever's playing on the host right now, only what
-would've come after it; `player` blocks until playback finishes before its next poll, so cutting off
-mid-sentence would need a different design.
+To stop everything queued for the current session (e.g. Claude said something long and you don't want to
+hear the rest), run `llm-response-tts-clear-speech`. It calls `ingress`'s `POST /clear {session}`, which
+empties that session's `pending_ids` list — so its `player` sees nothing pending on its next poll — and
+bumps that session's epoch counter in Redis so any job a worker already popped and is mid-synthesis for
+this session gets silently discarded instead of writing a wav nobody will ever ask for; other sessions'
+queued jobs are untouched. `llm-response-tts-clear-all-speech` is the blunter version: it calls
+`POST /clear-all`, which does the same for every known session at once (draining the shared `work_queue`
+too), for when you want silence across the board rather than just your current project. Neither command
+interrupts whatever's playing on the host right now, only what would've come after it; `player` blocks
+until playback finishes before its next poll, so cutting off mid-sentence would need a different design.
 
 ## Security Audit results
 
@@ -341,3 +381,12 @@ internal network — neither has a code path that can reach anywhere outside `ll
 that `docker compose up -d --build` (as used in step 2 of "How to install") touches the network on every
 invocation, not just the first, since it re-clones the build context and re-pulls base images — drop
 `--build` for routine restarts if you want network activity limited to true first-time setup.
+
+Per-session isolation (see "Session isolation" under Architecture) is an organizational and UX boundary, not
+a security one: it keeps concurrent Claude Code sessions' audio and queues from interfering with each other,
+but every session still authenticates with the same shared `LLM_RESPONSE_TTS_BEARER_TOKEN` against the same
+`ingress` instance. A session hash is derived from a directory path, not a secret, and isn't meant to be one
+— anyone who can reach `ingress` (i.e. anyone with the bearer token) can address, enqueue into, or clear any
+other session's queue simply by supplying its hash. That's an acceptable trade-off for a single-user local
+deployment where the token itself is already the trust boundary, but it means session hashes shouldn't be
+treated as access control if this is ever exposed beyond `127.0.0.1`.
