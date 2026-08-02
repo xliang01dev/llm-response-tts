@@ -2,10 +2,23 @@ name: llm-response-tts
 
 services:
   kokoros:
-    build: https://github.com/lucasjinreal/kokoros.git
+    # Pinned to the commit that was security-audited (see docs/security-resolution.md #1) -
+    # an unpinned git build source means every --build could silently pull a different
+    # upstream commit. Bump this deliberately (and re-audit) to pick up upstream changes.
+    build: https://github.com/lucasjinreal/kokoros.git#b54354b860df94b064e254524777ce41d4d2c689
     container_name: llm-response-tts-kokoros
     restart: unless-stopped
     command: ["--instances", "3", "openai"]
+    # Hardening (see docs/security-resolution.md #5b): kokoros' own dependency tree has
+    # known RustSec advisories we can't patch directly (not our source) - this bounds what
+    # code running inside that process could do if one were ever actually triggered.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 6g
+    networks:
+      - backend
     expose:
       - "3000"
     volumes:
@@ -15,6 +28,8 @@ services:
     image: redis:7-alpine
     container_name: llm-response-tts-redis
     restart: unless-stopped
+    networks:
+      - backend
     expose:
       - "6379"
 
@@ -26,8 +41,15 @@ services:
     restart: unless-stopped
     depends_on:
       - redis
+    networks:
+      - backend
     environment:
       REDIS_URL: redis://redis:6379
+      # Must match worker's bind mount below and ingest/player's own default (see
+      # host/tools/src/common.rs::sound_output_base()) - ingress derives each job's
+      # output_dir from this rather than trusting a client-supplied path (see
+      # docs/security-resolution.md #2).
+      LLM_RESPONSE_TTS_SOUND_OUTPUT: /tmp/llm-response-tts/output
     expose:
       - "3001"
 
@@ -41,6 +63,8 @@ services:
     depends_on:
       - redis
       - kokoros
+    networks:
+      - backend
     environment:
       REDIS_URL: redis://redis:6379
       KOKOROS_URL: http://kokoros:3000
@@ -56,11 +80,23 @@ services:
       - /tmp/llm-response-tts/output:/tmp/llm-response-tts/output
 
   nginx:
-    image: nginx:alpine
+    # Pinned (see docs/security-resolution.md #3) rather than the floating `alpine` tag -
+    # bump deliberately, same reasoning as kokoros' pinned build source above.
+    image: nginx:1.31.3-alpine
     container_name: llm-response-tts-nginx
     restart: unless-stopped
     depends_on:
       - ingress
+    # Multi-homed (see docs/security-resolution.md #5a): nginx is the only service on
+    # `edge` (so it's the only one that can have a host-published port at all) and is also
+    # on `backend` so it can reach ingress. Everything else - redis, ingress, worker,
+    # kokoros - is backend-only, which is `internal: true` (no route to the internet). That
+    # neutralizes kokoros' rustls-webpki advisories specifically: even in the narrow case
+    # where its reqwest fallback fires (see docs/security-resolution.md informational
+    # notes), it has nowhere to actually connect to.
+    networks:
+      - edge
+      - backend
     env_file:
       - path: docker/.env
         required: true
@@ -71,5 +107,8 @@ services:
       - ./docker/nginx/entrypoint.d/25-check-bearer-token.sh:/docker-entrypoint.d/25-check-bearer-token.sh:ro
 
 networks:
-  default:
-    name: llm-response-tts-net
+  edge:
+    name: llm-response-tts-edge
+  backend:
+    name: llm-response-tts-backend
+    internal: true

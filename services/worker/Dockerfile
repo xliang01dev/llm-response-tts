@@ -8,9 +8,12 @@ COPY worker ./worker
 
 RUN cargo build --release -p worker
 
-FROM debian:sid-slim AS runner
+FROM debian:bookworm-slim AS runner
 
 WORKDIR /app
 COPY --from=builder /app/target/release/worker ./worker
+
+RUN useradd --system --no-create-home appuser
+USER appuser
 
 ENTRYPOINT ["./worker"]

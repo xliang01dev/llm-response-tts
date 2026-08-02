@@ -8,10 +8,13 @@ COPY worker ./worker
 
 RUN cargo build --release -p ingress
 
-FROM debian:sid-slim AS runner
+FROM debian:bookworm-slim AS runner
 
 WORKDIR /app
 COPY --from=builder /app/target/release/ingress ./ingress
+
+RUN useradd --system --no-create-home appuser
+USER appuser
 
 EXPOSE 3001
 ENTRYPOINT ["./ingress"]

@@ -18,7 +18,12 @@ struct AppState {
 struct EnqueueRequest {
     text: String,
     session: String,
-    output_dir: String,
+    // A directory *name* (e.g. "2wfFFn-my-project"), not a path - see
+    // valid_session_dir(). ingress derives the actual output_dir server-side from this and
+    // its own sound_output_base(), rather than trusting a client-supplied path directly
+    // (see docs/security-resolution.md #2 - a prior version trusted output_dir as-is, which
+    // let an authenticated caller target any other session's directory).
+    session_dir: String,
 }
 
 #[derive(Serialize)]
@@ -78,6 +83,24 @@ fn status_key(id: i64) -> String {
     format!("llm-response-tts:status:{id}")
 }
 
+fn sound_output_base() -> String {
+    std::env::var("LLM_RESPONSE_TTS_SOUND_OUTPUT")
+        .unwrap_or_else(|_| "/tmp/llm-response-tts/output".to_string())
+}
+
+// session_dir must be a single path component (no traversal) that's actually derived from
+// session (not an unrelated name a caller could use to target another session's directory).
+// ingest always sends session_dir as session_hash or "session_hash-cwd-folder-name" (see
+// host/tools/src/common.rs::session_key()), so legitimate values always satisfy this.
+fn valid_session_dir(session: &str, session_dir: &str) -> bool {
+    !session_dir.is_empty()
+        && !session_dir.contains('/')
+        && !session_dir.contains('\\')
+        && session_dir != "."
+        && session_dir != ".."
+        && (session_dir == session || session_dir.starts_with(&format!("{session}-")))
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
@@ -109,6 +132,10 @@ async fn enqueue(
     if req.text.trim().is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
+    if !valid_session_dir(&req.session, &req.session_dir) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let output_dir = format!("{}/{}", sound_output_base(), req.session_dir);
 
     let id: i64 = state
         .redis
@@ -127,7 +154,7 @@ async fn enqueue(
         id,
         text: req.text,
         session: req.session.clone(),
-        output_dir: req.output_dir,
+        output_dir,
         epoch,
     })
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
