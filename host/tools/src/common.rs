@@ -1,8 +1,9 @@
-// Shared by the ingest and clear-speech binaries (src/bin/) via this crate's lib.rs.
-// player/ is a separate workspace member with its own dependencies and install location, so
-// it keeps its own small copy of read_env_var rather than depending on this crate.
+// Shared by the ingest, clear-speech, and clear-all-speech binaries (src/bin/) via this
+// crate's lib.rs. player/ is a separate workspace member with its own dependencies and
+// install location, so it keeps its own small copy of read_env_var rather than depending on
+// this crate.
 
-// ingest and clear-speech are installed via `cargo install`, which lands flat in
+// These binaries are installed via `cargo install`, which lands flat in
 // ~/.cargo/bin - so unlike the old bin/-relative layout, the repo root can no longer be
 // derived from the exe's own path at runtime. It also can't come from cwd: the whole point of
 // installing these globally is that a MessageDisplay hook in some *other* project's

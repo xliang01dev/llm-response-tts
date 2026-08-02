@@ -334,11 +334,13 @@ fn run() -> std::io::Result<()> {
     // ~/.cargo/bin if CARGO_HOME isn't set (the real install, `cargo install --path
     // host/player`) - named llm-response-tts-player, not just player, since it's installed into
     // a global bin directory shared with every other cargo tool on this machine.
-    // player finds tmp/, docker/.env, etc via its own cwd (see its main.rs) - Command::spawn
-    // children inherit the parent's cwd by default, and ours is already the repo root (see
-    // script_dir() above), so no explicit env var is needed to hand that off. player enforces
-    // its own single-instance lock on startup (mkdir tmp/worker.lock), so it's safe to always
-    // attempt a spawn here - a redundant one just exits immediately.
+    // player finds docker/.env via its own CARGO_MANIFEST_DIR (baked in at compile time, same as
+    // script_dir() above) and derives its own session_hash from cwd - Command::spawn children
+    // inherit the parent's cwd by default, and ours is wherever the hook fired from, which is
+    // exactly the cwd this ingest run computed session_hash from too, so the two agree without
+    // an explicit handoff. player enforces its own per-session single-instance lock on startup
+    // (mkdir /tmp/llm-response-tts/<session-dir>/player.lock), so it's safe to always attempt a
+    // spawn here - a redundant one just exits immediately.
     let cargo_home = std::env::var("CARGO_HOME").map(PathBuf::from).unwrap_or_else(|_| {
         let home = std::env::var("HOME").map(PathBuf::from).unwrap_or_else(|_| script_dir.clone());
         home.join(".cargo")
