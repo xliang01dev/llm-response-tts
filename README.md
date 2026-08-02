@@ -13,6 +13,7 @@ Speaks LLM agent responses out loud using [kokoros](https://github.com/lucasjinr
 - [How to customize voices](#how-to-customize-voices)
 - [How to change voice speed](#how-to-change-voice-speed)
 - [How is code tested](#how-is-code-tested)
+- [How to uninstall](#how-to-uninstall)
 - [Supporting documentation](#supporting-documentation)
   - [Available voices](#available-voices)
   - [Architecture](#architecture)
@@ -124,6 +125,20 @@ Both Cargo workspaces (`host/`, `services/`) have unit test coverage for their n
 ```
 
 `./setup.sh` runs `git config core.hooksPath .githooks` so `.githooks/pre-commit` - which just calls the script above - blocks a commit if the build or any test fails. Run it manually any time with `./scripts/test.sh`.
+
+## How to uninstall
+
+Run `./uninstall.sh`. It removes:
+
+- The Docker stack (`docker compose down` - stops and removes the containers and network, not the built images)
+- The host binaries (`cargo uninstall` for `ingest`, `clear-speech`, `clear-all-speech`, and `player`)
+- The pre-commit hook wiring (`git config --unset core.hooksPath`)
+
+It leaves a few things in place, since removing them is either destructive (your bearer token) or touches state outside the repo (your shell rc, `/tmp`) - remove these manually if you want a completely clean slate:
+
+- `docker/.env` - delete the file, or just `rm docker/.env`
+- The PATH line `setup.sh` may have added to your `.zshrc`/`.bash_profile`/`config.fish` - remove it by hand if you don't use `~/.cargo/bin` for anything else
+- Runtime state under `/tmp/llm-response-tts` (queued audio, buffers, player locks) - `rm -rf /tmp/llm-response-tts`
 
 ## Supporting documentation
 

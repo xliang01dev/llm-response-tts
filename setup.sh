@@ -60,13 +60,27 @@ else
   case "$SHELL" in
     */zsh) shell_rc="$HOME/.zshrc" ;;
     */bash) shell_rc="$HOME/.bash_profile" ;;
-    *) shell_rc="$HOME/.profile" ;;
+    */fish) shell_rc="$HOME/.config/fish/config.fish" ;;
+    *)
+      echo "    unrecognized \$SHELL ($SHELL) - add ~/.cargo/bin to PATH manually"
+      shell_rc=""
+      ;;
   esac
-  if ! grep -q '\.cargo/bin' "$shell_rc" 2>/dev/null; then
-    echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$shell_rc"
+  if [ -n "$shell_rc" ]; then
+    if grep -q '\.cargo/bin' "$shell_rc" 2>/dev/null; then
+      echo "    already in $shell_rc, just not in this shell's PATH yet - open a new"
+      echo "    terminal (or run 'source $shell_rc') before opening Claude Code"
+    else
+      if [[ "$shell_rc" == *config.fish ]]; then
+        mkdir -p "$(dirname "$shell_rc")"
+        echo 'set -gx PATH $HOME/.cargo/bin $PATH' >> "$shell_rc"
+      else
+        echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$shell_rc"
+      fi
+      echo "    added ~/.cargo/bin to PATH in $shell_rc - open a new terminal (or run"
+      echo "    'source $shell_rc') before opening Claude Code, so the hook can find it"
+    fi
   fi
-  echo "    added ~/.cargo/bin to PATH in $shell_rc - open a new terminal (or run"
-  echo "    'source $shell_rc') before opening Claude Code, so the hook can find it"
 fi
 
 echo "==> Building and starting the Docker stack"
