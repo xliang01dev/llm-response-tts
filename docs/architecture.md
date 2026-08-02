@@ -65,25 +65,39 @@ Host-side binaries, built by `cargo install` (see the main [README](../README.md
 `clear-speech`/`clear-all-speech` are commands you run yourself in a terminal, not something any
 LLM tool triggers.
 
-| Tool                | Summary                                                                                                            | Communicates via                                                                                                    | Crate dependencies                             |
-|---------------------|---------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------|-------------------------------------------------|
-| `ingest`             | `MessageDisplay` hook entrypoint; buffers streamed deltas per message, splits finished text into sentences, dedupes repeat sends. | Reads JSON deltas from stdin; `POST /` to nginx per sentence (`session`, `session_dir`, Bearer token); spawns `player`. | none (hand-rolled JSON/HTTP, std only)          |
-| `player`             | Per-session poll-and-play loop; plays synthesized sentences back in generation order, one instance per session.    | `GET /next` / `POST /ack` to nginx (Bearer token); reads and deletes `.wav` files from the session's output dir.      | `rodio`, `ureq`, `serde`, `serde_json`, `libc`  |
-| `clear-speech`       | Drops everything queued for the calling session. Run manually.                                                     | `POST /clear` to nginx (Bearer token).                                                                                | none (hand-rolled JSON/HTTP, std only)          |
-| `clear-all-speech`   | Drops everything queued across every session. Run manually.                                                        | `POST /clear-all` to nginx (Bearer token).                                                                            | none (hand-rolled JSON/HTTP, std only)          |
+| Tool                | Installed as                              | Summary                                                                                                            | Communicates via                                                                                                    | Crate dependencies                             |
+|---------------------|--------------------------------------------|---------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------|-------------------------------------------------|
+| `ingest`             | `llm-response-tts-ingest`                | `MessageDisplay` hook entrypoint; buffers streamed deltas per message, splits finished text into sentences, dedupes repeat sends. | Reads JSON deltas from stdin; `POST /` to nginx per sentence (`session`, `session_dir`, Bearer token); spawns `player`. | none (hand-rolled JSON/HTTP, std only)          |
+| `player`             | `llm-response-tts-player`                | Per-session poll-and-play loop; plays synthesized sentences back in generation order, one instance per session.    | `GET /next` / `POST /ack` to nginx (Bearer token); reads and deletes `.wav` files from the session's output dir.      | `rodio`, `ureq`, `serde`, `serde_json`, `libc`  |
+| `clear-speech`       | `llm-response-tts-clear-speech`          | Drops everything queued for the calling session. Run manually.                                                     | `POST /clear` to nginx (Bearer token).                                                                                | none (hand-rolled JSON/HTTP, std only)          |
+| `clear-all-speech`   | `llm-response-tts-clear-all-speech`      | Drops everything queued across every session. Run manually.                                                        | `POST /clear-all` to nginx (Bearer token).                                                                            | none (hand-rolled JSON/HTTP, std only)          |
 
 ## Services (Docker)
 
-Everything behind nginx. See [security-audit.md](security-audit.md) for how these are isolated
-from each other and from the internet.
+Everything behind nginx, built into images and run via `docker-compose.yml`. Neither `ingress`
+nor `worker` runs on the host directly. `docker/` holds their supporting config: nginx's config
+template and bearer-token startup check, plus the gitignored `.env` holding the bearer token
+itself. See [security-audit.md](security-audit.md) for how these are isolated from each other and
+from the internet.
 
-| Service        | Summary                                                                                                                    | Communicates via                                                                                                          |
-|----------------|-------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------|
-| `nginx`        | Host-facing reverse proxy; the only container with a published port; enforces the bearer token before forwarding anything. | Listens on `127.0.0.1:3000`; proxies to `ingress` over the backend network.                                                   |
-| `ingress`      | Queue API; the only write path into Redis. Validates `session_dir` against `session`, derives `output_dir` server-side, assigns sentence ids. | HTTP from nginx only; talks to Redis over the backend network.                                                                |
-| `redis`        | Work queue plus per-session ordering/status state.                                                                          | TCP, backend network only; read and written by `ingress` and `worker`.                                                        |
-| `worker` (×3)  | Transforms text (unit expansion, word references, character stripping) and synthesizes it via kokoros; writes the resulting `.wav`. | Pulls jobs from Redis; calls kokoros's OpenAI-compatible API over the backend network; writes to the shared output dir bind mount. |
-| `kokoros`      | Runs the Kokoro-82M model in-container; the only thing that actually does text-to-speech.                                   | HTTP from `worker` only, backend network, no outbound internet access (`internal: true`).                                     |
+| Service    | Replicas | Summary                                                                                                                    | Communicates via                                                                                                          |
+|------------|----------|---------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------|
+| `nginx`    | 1        | Host-facing reverse proxy; the only container with a published port; enforces the bearer token before forwarding anything. | Listens on `127.0.0.1:3000`; proxies to `ingress` over the backend network.                                                   |
+| `ingress`  | 1        | Queue API; the only write path into Redis. Validates `session_dir` against `session`, derives `output_dir` server-side, assigns sentence ids. | HTTP from nginx only; talks to Redis over the backend network.                                                                |
+| `redis`    | 1        | Work queue plus per-session ordering/status state.                                                                          | TCP, backend network only; read and written by `ingress` and `worker`.                                                        |
+| `worker`   | 3        | Transforms text (unit expansion, word references, character stripping) and synthesizes it via kokoros; writes the resulting `.wav`. | Pulls jobs from Redis; calls kokoros's OpenAI-compatible API over the backend network; writes to the shared output dir bind mount. |
+| `kokoros`  | 1        | Runs the Kokoro-82M model in-container; the only thing that actually does text-to-speech.                                   | HTTP from `worker` only, backend network, no outbound internet access (`internal: true`).                                     |
+
+## Runtime state on disk
+
+| Path | What lives there |
+| --- | --- |
+| `/tmp/llm-response-tts/buffer/<session>/` | Per-session message delta buffers and the last-message dedupe marker; safe to delete while idle |
+| `LLM_RESPONSE_TTS_SOUND_OUTPUT/<session>/` | Synthesized `.wav` files, one subdirectory per session |
+| `/tmp/llm-response-tts/lock/<session>.lock/` | One lock dir per session (with a `pid` file), held by that session's running `player` |
+
+See [Session isolation](#session-isolation) for why sound output lives outside the repo and split
+per session.
 
 ## Rust frameworks and crates (Docker services)
 
