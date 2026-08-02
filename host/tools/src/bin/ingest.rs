@@ -348,3 +348,7 @@ fn run() -> std::io::Result<()> {
 fn main() {
     let _ = run();
 }
+
+#[cfg(test)]
+#[path = "ingest_tests.rs"]
+mod tests;

@@ -297,28 +297,5 @@ fn main() {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn murmurhash3_of_empty_input_is_zero() {
-        assert_eq!(murmurhash3_x86_32(b"", 0), 0);
-    }
-
-    #[test]
-    fn to_base62_of_zero_is_all_zero_chars() {
-        assert_eq!(to_base62(0, 6), "000000");
-    }
-
-    #[test]
-    fn to_base62_roundtrips_small_value() {
-        assert_eq!(to_base62(125, 6), "000021");
-    }
-
-    #[test]
-    fn session_key_dir_name_starts_with_the_hash() {
-        let (hash, dir_name) = session_key();
-        assert_eq!(hash.len(), 6);
-        assert!(dir_name.starts_with(&format!("{hash}-")));
-    }
-}
+#[path = "main_tests.rs"]
+mod tests;

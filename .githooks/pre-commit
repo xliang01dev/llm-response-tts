@@ -1,0 +1,9 @@
+#!/bin/sh
+# Installed via `git config core.hooksPath .githooks` (see setup.sh). Blocks a commit unless
+# both Cargo workspaces build and every test passes.
+repo_root=$(cd "$(dirname "$0")/.." && pwd)
+
+if ! "$repo_root/scripts/test.sh"; then
+  echo "pre-commit: build or tests failed - commit blocked" >&2
+  exit 1
+fi

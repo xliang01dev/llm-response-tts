@@ -254,3 +254,7 @@ async fn clear_all(State(mut state): State<AppState>) -> StatusCode {
         Err(_) => StatusCode::SERVICE_UNAVAILABLE,
     }
 }
+
+#[cfg(test)]
+#[path = "main_tests.rs"]
+mod tests;

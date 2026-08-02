@@ -113,16 +113,22 @@ pub fn sound_output_base() -> std::path::PathBuf {
         .unwrap_or_else(|_| std::path::PathBuf::from("/tmp/llm-response-tts/output"))
 }
 
+// Split from http_post so the request-string assembly (headers, Content-Length, CRLF layout)
+// is checkable without an actual socket.
+fn build_http_request(path: &str, token: &str, body: &str) -> String {
+    format!(
+        "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:3000\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+}
+
 // Minimal hand-rolled HTTP/1.1 POST (nginx on 127.0.0.1:3000) - kept dependency-free (no HTTP
 // client crate) since the target and request shape never vary. Shared by ingest, clear-speech,
 // and clear-all-speech - see module comment for why player keeps its own copy instead.
 pub fn http_post(path: &str, token: &str, body: &str) -> std::io::Result<String> {
     use std::io::{Read, Write};
     let mut stream = std::net::TcpStream::connect(("127.0.0.1", 3000))?;
-    let request = format!(
-        "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:3000\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    );
+    let request = build_http_request(path, token, body);
     stream.write_all(request.as_bytes())?;
     let mut response = String::new();
     stream.read_to_string(&mut response)?;
@@ -134,52 +140,5 @@ pub fn http_status_line(response: &str) -> &str {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn murmurhash3_of_empty_input_is_zero() {
-        assert_eq!(murmurhash3_x86_32(b"", 0), 0);
-    }
-
-    #[test]
-    fn murmurhash3_is_deterministic() {
-        let a = murmurhash3_x86_32(b"/Users/xliang/projects/foo", 0);
-        let b = murmurhash3_x86_32(b"/Users/xliang/projects/foo", 0);
-        assert_eq!(a, b);
-    }
-
-    #[test]
-    fn murmurhash3_differs_for_different_input() {
-        let a = murmurhash3_x86_32(b"/Users/xliang/projects/foo", 0);
-        let b = murmurhash3_x86_32(b"/Users/xliang/projects/bar", 0);
-        assert_ne!(a, b);
-    }
-
-    #[test]
-    fn to_base62_of_zero_is_all_zero_chars() {
-        assert_eq!(to_base62(0, 6), "000000");
-    }
-
-    #[test]
-    fn to_base62_roundtrips_small_value() {
-        // 125 = 2*62 + 1 -> digits [2, 1] in base62, left-padded to width 6
-        assert_eq!(to_base62(125, 6), "000021");
-    }
-
-    #[test]
-    fn to_base62_is_fixed_width_and_valid_alphabet() {
-        for n in [0u32, 1, 61, 62, 125, u32::MAX] {
-            let s = to_base62(n, 6);
-            assert_eq!(s.len(), 6);
-            assert!(s.bytes().all(|b| BASE62_ALPHABET.contains(&b)));
-        }
-    }
-
-    #[test]
-    fn session_key_dir_name_starts_with_the_hash() {
-        let (hash, dir_name) = session_key();
-        assert_eq!(hash.len(), 6);
-        assert!(dir_name.starts_with(&format!("{hash}-")));
-    }
-}
+#[path = "common_tests.rs"]
+mod tests;

@@ -27,6 +27,9 @@ else
   echo "==> rust already installed, skipping"
 fi
 
+echo "==> Wiring up the pre-commit hook (.githooks/pre-commit - runs scripts/test.sh)"
+git config core.hooksPath .githooks
+
 echo "==> Setting up docker/.env"
 if [ ! -f docker/.env ]; then
   echo "LLM_RESPONSE_TTS_BEARER_TOKEN=$(openssl rand -hex 32)" > docker/.env

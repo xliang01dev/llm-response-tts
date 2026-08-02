@@ -2,6 +2,11 @@
 name = "llm-response-tts-tools"
 version = "0.1.0"
 edition = "2024"
+# The 3 binaries below are explicitly declared with their own [[bin]] path, so autobins
+# discovery isn't needed for them - and without it off, Cargo also picks up
+# src/bin/ingest_tests.rs (linked into ingest.rs via #[path], not a binary itself) as a
+# fourth binary target of its own, which fails to compile (no `main`, no `super`).
+autobins = false
 
 [[bin]]
 name = "llm-response-tts-ingest"
