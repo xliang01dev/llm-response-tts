@@ -137,7 +137,7 @@ fn strip_chars(text: &str, chars: &HashSet<char>) -> String {
 
 // Expands "<number><unit>" tokens (e.g. "24ms", "1in") into "<number> <spoken unit>" so TTS
 // doesn't try to sound out the abbreviation. Longest-match on configured units, case-sensitive
-// (units like "MB" vs "mb" mean different things), and only when the unit isn't itself the
+// (units like "MB" versus "mb" mean different things), and only when the unit isn't itself the
 // start of a longer word (so "24mstest" is left alone).
 fn expand_measurements(text: &str, units: &[(String, String, String)]) -> String {
     if units.is_empty() {
