@@ -130,13 +130,17 @@ fn play_wav(mixer: &rodio::mixer::Mixer, path: &Path) -> Result<(), Box<dyn Erro
 }
 
 fn main() {
-    // This binary is installed outside the repo (see ingest's spawn comment for why), so it
-    // can't derive the repo root from its own exe location - LLM_RESPONSE_TTS_ROOT is
-    // required, falling back to cwd for manual/dev runs from the repo root.
-    let script_dir = std::env::var("LLM_RESPONSE_TTS_ROOT")
-        .map(PathBuf::from)
-        .or_else(|_| std::env::current_dir())
-        .expect("LLM_RESPONSE_TTS_ROOT not set and failed to get current dir");
+    // This binary is installed outside the repo (see ingest's spawn comment for why), and can
+    // be spawned while Claude Code's cwd is some *other* project entirely - not this repo - so
+    // the root can't come from cwd or the exe's own path either. Baked in at compile time
+    // instead, via CARGO_MANIFEST_DIR (this crate's own Cargo.toml location during `cargo
+    // install`), same approach as host/tools/src/common.rs::script_dir(). Re-run `cargo
+    // install` after moving the repo to pick up the new location.
+    let script_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("CARGO_MANIFEST_DIR has unexpected shape")
+        .to_path_buf();
     let out_dir = script_dir.join("tmp");
     // Fixed system path, not repo-relative like the rest of script_dir's uses below - worker
     // (in its container) and player (on the host) both default to the same literal path

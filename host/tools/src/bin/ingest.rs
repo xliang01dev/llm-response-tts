@@ -320,26 +320,28 @@ fn run() -> std::io::Result<()> {
     // player must run from the boot volume - macOS kills CoreAudio-linked (cpal) binaries
     // executed from elsewhere with SIGKILL (Code Signature Invalid), a restriction that
     // doesn't apply to plain binaries like this one. Resolved in priority order:
-    // LLM_RESPONSE_TTS_PLAYER_BIN env var (explicit dev override, e.g. pointing at a debug
-    // build in a custom spot), then /tmp/llm-response-tts/llm-response-tts-player (the default
-    // dev build, see host/player/build.sh), then ~/.cargo/bin/llm-response-tts-player (the real
-    // install, `cargo install --path host/player`) - named llm-response-tts-player, not just
-    // player, since it's installed into a global bin directory shared with every other cargo
-    // tool on this machine. LLM_RESPONSE_TTS_ROOT tells player where to find tmp/, docker/.env,
-    // etc, since it can no longer derive that from its own (now relocated) path. player
-    // enforces its own single-instance lock on startup (mkdir tmp/worker.lock), so it's safe to
-    // always attempt a spawn here - a redundant one just exits immediately.
-    let home = std::env::var("HOME").map(PathBuf::from).unwrap_or_else(|_| script_dir.clone());
+    // /tmp/llm-response-tts/llm-response-tts-player (the dev build, see host/player/build.sh -
+    // this is also where you'd point a one-off debug build, so there's no separate override
+    // env var for that), then $CARGO_HOME/bin/llm-response-tts-player, falling back to
+    // ~/.cargo/bin if CARGO_HOME isn't set (the real install, `cargo install --path
+    // host/player`) - named llm-response-tts-player, not just player, since it's installed into
+    // a global bin directory shared with every other cargo tool on this machine.
+    // player finds tmp/, docker/.env, etc via its own cwd (see its main.rs) - Command::spawn
+    // children inherit the parent's cwd by default, and ours is already the repo root (see
+    // script_dir() above), so no explicit env var is needed to hand that off. player enforces
+    // its own single-instance lock on startup (mkdir tmp/worker.lock), so it's safe to always
+    // attempt a spawn here - a redundant one just exits immediately.
+    let cargo_home = std::env::var("CARGO_HOME").map(PathBuf::from).unwrap_or_else(|_| {
+        let home = std::env::var("HOME").map(PathBuf::from).unwrap_or_else(|_| script_dir.clone());
+        home.join(".cargo")
+    });
     let dev_player = PathBuf::from("/tmp/llm-response-tts/llm-response-tts-player");
-    let player = if let Ok(p) = std::env::var("LLM_RESPONSE_TTS_PLAYER_BIN") {
-        PathBuf::from(p)
-    } else if dev_player.exists() {
+    let player = if dev_player.exists() {
         dev_player
     } else {
-        home.join(".cargo/bin/llm-response-tts-player")
+        cargo_home.join("bin").join("llm-response-tts-player")
     };
     let _ = Command::new(player)
-        .env("LLM_RESPONSE_TTS_ROOT", &script_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
