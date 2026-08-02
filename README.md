@@ -115,22 +115,32 @@ See [architecture](docs/architecture.md) for why sound output lives outside the 
 
 ## Supporting documentation
 
-### [Available voices](docs/voices.md)
+### Available voices [link](docs/voices.md)
 
 The full list of voice names kokoros accepts, beyond the handful mentioned in "Customizing" above, plus
 where to look if you need one that isn't listed there.
 
-### [Architecture](docs/architecture.md)
+### Architecture [link](docs/architecture.md)
 
 How a message flows from the hook through `ingest`, `ingress`, the `worker` pool, and `player`, including
 diagrams, the per-session isolation design, and how playback ordering is kept correct despite parallel
 synthesis.
 
-### [Security audit](docs/security-audit.md)
+### Security audit [link](docs/security-audit.md)
 
-Why the pipeline is architected the way it is: nginx as the single bearer-token-gated entry point with
-everything else confined to an internal-only Docker network, so nothing but that one gate is ever exposed
-on the host. Covers how that design keeps voice synthesis genuinely local - no audio or text ever leaves
-the machine - and why kokoros (a Rust implementation of Kokoro TTS) was chosen over a cloud TTS API in the
-first place: it runs the model in-container with no outbound calls at runtime, so privacy comes from the
-architecture itself rather than a provider's promise.
+The whole point of running this locally is that what Claude says to you never has to leave your machine,
+so the architecture is built around that guarantee rather than just hoping it holds. Only `nginx` is bound
+to the host at all, and only on `127.0.0.1:3000`; kokoros, Redis, `ingress`, and every `worker` container
+sit on an internal-only Docker network with no host-published port, so there's nothing else on the machine
+for another process to even reach. Every request through that one gate has to carry a bearer token nginx
+checks before it forwards anything on, and startup is designed to fail closed - if the token file is
+missing or misconfigured, nginx refuses to start rather than quietly coming up unauthenticated.
+
+That network isolation is also what makes voice synthesis genuinely local instead of just locally hosted:
+kokoros runs the Kokoro-82M model in-container and never makes an outbound call at request time, so there's
+no path for audio or text to leave the machine once it's playing. This is also why kokoros specifically -
+a Rust implementation of Kokoro TTS - was picked in the first place over calling out to a cloud TTS API:
+running the model yourself, in a language with a small dependency footprint and no telemetry by default,
+means privacy is a property of the architecture rather than a promise from a third-party provider. See the
+doc for the full audit, including the network-egress check and what the per-session isolation feature does
+and doesn't protect against.
