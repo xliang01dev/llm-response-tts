@@ -72,8 +72,9 @@ echo "==> Verifying the stack responds"
 token=$(grep LLM_RESPONSE_TTS_BEARER_TOKEN docker/.env | cut -d= -f2-)
 enqueue() {
   curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $token" \
-    -H "Content-Type: application/json" -d '{"text":"setup verification"}' http://127.0.0.1:3000/ \
-    2>/dev/null || echo "000"
+    -H "Content-Type: application/json" \
+    -d '{"text":"setup verification","session":"setup-verify","output_dir":"/tmp/llm-response-tts/output/setup-verify"}' \
+    http://127.0.0.1:3000/ 2>/dev/null || echo "000"
 }
 sleep 2
 code=$(enqueue)
@@ -91,7 +92,7 @@ if [ "$code" != "202" ]; then
   fi
 fi
 echo "    stack is responding correctly"
-"$HOME/.cargo/bin/llm-response-tts-clear-speech" >/dev/null 2>&1 || true
+"$HOME/.cargo/bin/llm-response-tts-clear-all-speech" >/dev/null 2>&1 || true
 
 echo
 echo "==> Done. Open Claude Code in this directory and talk to it normally - responses"

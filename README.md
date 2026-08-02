@@ -5,65 +5,36 @@ implementation of Kokoro TTS), served locally in Docker, via a `MessageDisplay` 
 
 ## How to install
 
-Install via Homebrew if you don't already have them:
+| Tool | Install | Why it's needed |
+| --- | --- | --- |
+| Rust | `brew install rust` | Provides `cargo`, which builds the four host binaries (`ingest`, `clear-speech`, `clear-all-speech`, `player`) |
+| Docker | `brew install --cask docker` | Runs kokoros, Redis, `ingress`, and `worker` via Compose; open Docker Desktop once after installing so its daemon is running |
 
-```bash
-brew install rust
-brew install --cask docker
-```
-
-- **rust** - provides `cargo`, which builds all four host binaries (`llm-response-tts-ingest`,
-  `llm-response-tts-clear-speech`, `llm-response-tts-clear-all-speech`, `llm-response-tts-player`) from the
-  `host/` Cargo workspace. Audio playback is via the `rodio` crate, so no external player binary like
-  `ffplay` is needed.
-- **Docker** (with Compose) - runs the kokoros TTS server plus Redis and the queue/worker services. See
-  `docker-compose.yml`. `brew install --cask docker` installs Docker Desktop, which bundles Compose; open
-  it once after installing so its background daemon is running before step 2 below.
-
-Run `./setup.sh` to do all of the below in one shot - installs rust via Homebrew if missing, creates
-`docker/.env` if missing, installs all four host binaries via `cargo install`, makes sure `~/.cargo/bin`
-is actually on `PATH` (Homebrew's `rust` formula doesn't add it there the way `rustup` would), builds and
-starts the Docker stack, and verifies it actually responds to a real enqueue request before declaring
-success. If nginx was already running from a previous `setup.sh` run and ends up holding a stale connection
-to a container that just got rebuilt, the verification step recreates nginx and retries once rather than
-silently leaving you with a stack that looks up but doesn't actually work. Safe to re-run after a
-`git pull` to rebuild everything; it won't touch an existing `docker/.env`. The steps below are what it's
+Run `./setup.sh` to do all of the below in one shot: installs Rust if missing (Docker must already be
+installed), creates `docker/.env`, installs the host binaries, builds and starts the Docker stack, and
+verifies it responds to a real request. Safe to re-run after a `git pull`. The steps below are what it's
 doing, for anyone who wants to run or customize them individually.
 
-1. Create `docker/.env` with a bearer token used to authenticate requests to the TTS server:
+1. Create `docker/.env` with a bearer token.
 
    ```bash
    echo "LLM_RESPONSE_TTS_BEARER_TOKEN=$(openssl rand -hex 32)" > docker/.env
    ```
 
-2. Start the stack (builds native images for kokoros, `ingress`, and `worker` on first run):
+2. Build and start the stack.
 
    ```bash
    docker compose up -d --build
    ```
 
-3. Install the host-side Rust binaries (rebuild after editing the source or upgrading rustc/cargo). `host/`
-   is a Cargo workspace with two members: `tools` (package `llm-response-tts-tools`, zero third-party
-   dependencies - builds `ingest`, `clear-speech`, and `clear-all-speech`, sharing
-   `host/tools/src/common.rs`) and `player` (package `llm-response-tts-player`, real dependencies). Both are
-   installed via `cargo install`, which
-   always lands in `~/.cargo/bin` - a fixed, global location, so the hook (step 4) can reference a binary by
-   name alone rather than a path tied to this specific checkout:
+3. Install the host binaries via `cargo install` (re-run after editing their source).
 
    ```bash
    cargo install --path host/tools --force
    cargo install --path host/player --force
    ```
 
-   This matters even more for `player`: it must run from the boot volume. If this repo lives on a non-boot
-   volume (e.g. an external or secondary drive, as `/Volumes/...` paths do on macOS), the OS kills
-   CoreAudio-linked binaries (`player` links `cpal` for audio output) executed from that volume with
-   `SIGKILL (Code Signature Invalid)` - a restriction that doesn't apply to `ingest`, `clear-speech`, or
-   `clear-all-speech`, none of which has such a dependency, but `cargo install` sidesteps it for all four
-   either way since `~/.cargo/bin` is always on the boot volume. See "What it installs" below for the full
-   picture.
-
-4. Wire the hook in `.claude/settings.json` (project-level, already included in this repo):
+4. Wire the hook in `.claude/settings.json` (already included in this repo).
 
    ```json
    {
@@ -83,98 +54,58 @@ doing, for anyone who wants to run or customize them individually.
    }
    ```
 
-   This references the binary by name alone rather than a path into this checkout, so it works regardless
-   of where the repo lives - as long as `~/.cargo/bin` is on `PATH` (step 3's `setup.sh` run checks this and
-   fixes it if needed; if you skip `setup.sh`, make sure of it yourself, or the hook will silently do
-   nothing).
-
-   You're not limited to enabling this in the `llm-response-tts` repo itself - copy the same hook config
-   into any other project's `.claude/settings.json` (or into `~/.claude/settings.json` to enable it for
-   every project) to have Claude's responses spoken aloud while you work there too. `ingest` and `player`
-   both locate *this* repo's `docker/.env` and `tmp/` at compile time (see "What it installs" below), not
-   from Claude Code's current working directory, so they resolve correctly no matter which project the
-   hook actually fires from.
-
-5. Open Claude Code in this project directory. On first run it will prompt you to trust the project's
-   `.claude/settings.json` since hooks execute arbitrary shell commands - approve it.
+5. Open Claude Code in this project directory and approve the `.claude/settings.json` trust prompt.
 
 6. Talk to Claude normally; responses should now play back as audio.
 
 ### Customizing
 
-- **Voice**: change the `KOKOROS_VOICE` environment variable on the `worker` service in
-  `docker-compose.yml` to any voice supported by kokoros (e.g. `af_sky`, `af_bella`, `bm_daniel`,
-  `bm_george`), then `docker compose up -d` to pick it up (no rebuild needed - it's an env var, not baked
-  into the image). See "Env variables" below for the full list of knobs.
-- **Server URL/port**: if you change the host port mapping in `docker-compose.yml`'s `nginx` service,
-  update the hardcoded `127.0.0.1:3000` in `host/tools/src/bin/ingest.rs`'s `post_text` function and
-  `host/player/src/main.rs`'s `BASE_URL`, then recompile both (see step 3 above).
+| Setting | How to change | Notes |
+| --- | --- | --- |
+| Voice | Set `KOKOROS_VOICE` on the `worker` service in `docker-compose.yml`, then `docker compose up -d` (no rebuild needed - it's an env var, not baked into the image) | Default `af_heart`; see [kokoros](https://github.com/lucasjinreal/kokoros) for available voice names |
+| Server URL/port | Update the hardcoded `127.0.0.1:3000` in `host/tools/src/bin/ingest.rs`'s `post_text` and `host/player/src/main.rs`'s `BASE_URL`, then reinstall (step 3 above) | Only needed if you change the `nginx` host port mapping in `docker-compose.yml` |
 
 ## What it installs
 
-**Four host binaries**, built from the `host/` Cargo workspace and run directly on your machine (not in
-Docker):
+**Host binaries** (built from the `host/` Cargo workspace, run directly on your machine, not in Docker):
 
-- `ingest` (`host/tools/src/bin/ingest.rs`, installed as `llm-response-tts-ingest`) - the `MessageDisplay`
-  hook entrypoint.
-- `clear-speech` (`host/tools/src/bin/clear-speech.rs`, installed as `llm-response-tts-clear-speech`) -
-  drops everything queued for the calling session (see "Session isolation" below).
-- `clear-all-speech` (`host/tools/src/bin/clear-all-speech.rs`, installed as
-  `llm-response-tts-clear-all-speech`) - drops everything queued across every session.
-- `player` (`host/player/src/main.rs`, installed as `llm-response-tts-player`) - plays back one session's
-  synthesized wav files in order.
+| Binary | Installed as | What it does |
+| --- | --- | --- |
+| `ingest` | `llm-response-tts-ingest` | `MessageDisplay` hook entrypoint: buffers streamed deltas, splits into sentences, enqueues each one |
+| `clear-speech` | `llm-response-tts-clear-speech` | Drops everything queued for the calling session (see "Session isolation") |
+| `clear-all-speech` | `llm-response-tts-clear-all-speech` | Drops everything queued across every session |
+| `player` | `llm-response-tts-player` | Plays back one session's synthesized wav files in order |
 
-`ingest`, `clear-speech`, and `clear-all-speech` live in the `tools` package (zero third-party dependencies,
-share `host/tools/src/common.rs` via `lib.rs`). `player` is its own package (`rodio` for playback, `ureq`
-for HTTP) because it needs its own install path: all four are named `llm-response-tts-*` rather than their
-bare role names since `~/.cargo/bin` is a global directory shared with every other cargo tool on the machine
-- same reasoning as the `llm-response-tts-*` container names below.
+`ingest`, `clear-speech`, and `clear-all-speech` share `host/tools/src/common.rs`; `player` is a separate
+package with its own dependencies (`rodio`, `ureq`). All four are meant to run from *any* project's
+directory, so each bakes this repo's location into the binary at **compile time** via
+`env!("CARGO_MANIFEST_DIR")`, letting them find *this* repo's `docker/.env` regardless of which project's
+`cwd` the hook fires from - re-run `cargo install` (step 3 above) after moving the repo. `ingest` always
+spawns `player` from `$CARGO_HOME/bin` (falling back to `~/.cargo/bin`); there's no separate dev-build path.
 
-All four are meant to be invoked from *any* project's directory, not just this repo's own (`ingest` from the
-`MessageDisplay` hook, the rest by hand) - so none of them can rely on Claude Code's current working
-directory, or on where the installed binary file itself happens to sit (`~/.cargo/bin` is a fixed location
-shared by every cargo tool on the machine). Instead, `ingest`, `clear-speech`, and `clear-all-speech`
-(`host/tools/src/common.rs::script_dir()`) and `player` (its own copy in `main.rs`) each bake this repo's
-location into the binary at **compile time**, via Rust's `env!("CARGO_MANIFEST_DIR")` - the directory
-containing that crate's own `Cargo.toml` at the moment `cargo install` builds it. That's how they always
-find *this* repo's `docker/.env` and `tmp/` correctly regardless of which project's cwd the hook actually
-fires from. Re-run `cargo install` (step 3 above) after moving the repo to a new location, so the baked-in
-path gets updated.
+**Docker services** (built into images, run via `docker-compose.yml`):
 
-`ingest` always spawns `player` from `$CARGO_HOME/bin/llm-response-tts-player` (falling back to
-`~/.cargo/bin` if `CARGO_HOME` isn't set) - there's no separate dev-build path or override env var. When
-iterating on `player`'s source, `cargo install --path host/player --force` (step 3 above) is how you pick up
-the change; `~/.cargo/bin` is always on the boot volume regardless of where this repo lives, so the
-CoreAudio SIGKILL restriction mentioned in step 3 never applies to it.
-
-**Five Docker services**, built into images and run via `docker-compose.yml`:
-
-- `kokoros` - the Kokoro-82M TTS model, served over an OpenAI-compatible `/v1/audio/speech` API.
-- `redis` - the work queue and ordering state.
-- `ingress` (`services/ingress/`) - assigns each sentence its ordering id and pushes it onto the Redis work
-  queue.
-- `worker` (`services/worker/`, ×3 replicas) - transforms and synthesizes text.
-- `nginx` - the only container with a host-published port; enforces the bearer-token check in front of
-  everything else.
+| Service | Replicas | What it does |
+| --- | --- | --- |
+| `kokoros` | 1 | Kokoro-82M TTS model, served over an OpenAI-compatible `/v1/audio/speech` API |
+| `redis` | 1 | Work queue and ordering state |
+| `ingress` | 1 | Assigns each sentence its ordering id, pushes it onto the Redis work queue |
+| `worker` | 3 | Transforms and synthesizes text |
+| `nginx` | 1 | Only container with a host-published port; enforces the bearer-token check in front of everything else |
 
 Neither `ingress` nor `worker` runs on the host directly. `docker/` holds their supporting config: nginx's
 config template and bearer-token startup check, plus the gitignored `.env` holding the bearer token itself.
 
 **Runtime state created on disk:**
 
-- `tmp/` (repo-local, gitignored) - message buffers and the last-message dedupe marker. Safe to delete at
-  any time while idle.
-- `LLM_RESPONSE_TTS_SOUND_OUTPUT` (defaults to `/tmp/llm-response-tts/output`, outside the repo) - parent
-  directory for synthesized `.wav` files. Each calling session gets its own subdirectory under here
-  (`<session-hash>-<cwd-last-component>/`), written by `worker` and consumed by that session's own `player`.
-  See "Architecture" below for why this lives outside the repo instead of under `tmp/`, and "Session
-  isolation" for why it's split per session.
-- `/tmp/llm-response-tts/lock/<session-hash>-<cwd-last-component>.lock` - one lock directory per session
-  (containing a `pid` file), held by that session's running `player` for as long as it's alive. All
-  sessions' locks live together here so `ls /tmp/llm-response-tts/lock` shows every session with a
-  live-or-stale lock at a glance. Always under `/tmp/llm-response-tts` directly, regardless of where
-  `LLM_RESPONSE_TTS_SOUND_OUTPUT` points, so lock locations stay predictable even if that env var is
-  reconfigured.
+| Path | What lives there |
+| --- | --- |
+| `tmp/` (repo-local, gitignored) | Message buffers and the last-message dedupe marker; safe to delete while idle |
+| `LLM_RESPONSE_TTS_SOUND_OUTPUT/<session>/` | Synthesized `.wav` files, one subdirectory per session |
+| `/tmp/llm-response-tts/lock/<session>.lock/` | One lock dir per session (with a `pid` file), held by that session's running `player` |
+
+See "Architecture" below for why sound output lives outside the repo, and "Session isolation" for why both
+of these are split per session.
 
 ## Env variables
 
