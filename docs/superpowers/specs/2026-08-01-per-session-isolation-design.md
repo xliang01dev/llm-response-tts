@@ -50,18 +50,25 @@ same CLI).
 
 Two derived values, used for different purposes:
 
-- **`session_hash`** — an 8-hex-character hash of the absolute cwd path. Used everywhere a value needs to
-  be URL/Redis-key-safe: the `session` field in `ingress` requests, and all session-scoped Redis keys.
-- **`session_dir_name`** — `<session_hash>-<last-path-component-of-cwd>`, e.g. `a3f9c21e-llm-response-tts`.
+- **`session_hash`** — the absolute cwd path hashed with MurmurHash3 (32-bit, x86 variant) and encoded as
+  a fixed-width 6-character base62 string (`0-9A-Za-z`; 6 chars covers the full 32-bit space since
+  `62^6 > 2^32`), e.g. `3fK9pQ`. Base62 rather than hex to keep it short and URL-shortener-style compact.
+  Used everywhere a value needs to be URL/Redis-key-safe: the `session` field in `ingress` requests, and
+  all session-scoped Redis keys.
+- **`session_dir_name`** — `<session_hash>-<last-path-component-of-cwd>`, e.g. `3fK9pQ-llm-response-tts`.
   Used only for filesystem paths (the per-session output directory and lock directory), where a
   human-readable suffix helps when browsing `/tmp` directly. Never appears in a URL or as a bare Redis key.
 
-Hash implementation: a small dependency-free FNV-1a (not `std::collections::hash_map::DefaultHasher` —
+Hash implementation: MurmurHash3_x86_32, hand-rolled (not `std::collections::hash_map::DefaultHasher` —
 its algorithm is explicitly not guaranteed stable across Rust releases, which matters here since three
-separately-compiled binaries must agree on the same hash for the same cwd). Lives in
-`host/tools/src/common.rs` as `session_key() -> (session_hash: String, session_dir_name: String)`, with
-`player` keeping its own small copy (matching the existing pattern where it already keeps its own
-`read_env_var` rather than depending on the `tools` crate).
+separately-compiled binaries must agree on the same hash for the same cwd; and not a `murmur3` crate, to
+keep `host/tools` dependency-free). Correctness relative to the "official" MurmurHash3 spec doesn't
+actually matter for this use case — nothing outside this project ever needs to reproduce these hashes —
+only that it's deterministic, has reasonable distribution to avoid collisions between project directories,
+and that the two copies agree byte-for-byte. Lives in `host/tools/src/common.rs` as
+`session_key() -> (session_hash: String, session_dir_name: String)`, with `player` keeping its own
+identical copy (matching the existing pattern where it already keeps its own `read_env_var` rather than
+depending on the `tools` crate).
 
 ### 2. Per-session output directory
 
@@ -138,20 +145,20 @@ current) is unchanged in mechanism — it just reads `epoch:<job.session>` inste
 
 ## Example flow
 
-Two Claude Code windows open, one in `~/projects/foo` (`session_hash` = `aaaa1111`), one in
-`~/projects/bar` (`session_hash` = `bbbb2222`):
+Two Claude Code windows open, one in `~/projects/foo` (`session_hash` = `3fK9pQ`), one in
+`~/projects/bar` (`session_hash` = `9mZ2xR`):
 
-1. `foo`'s `ingest` enqueues text → `ingress` pushes id `501` onto `pending_ids:aaaa1111` and a job
-   `{id: 501, session: "aaaa1111", output_dir: ".../aaaa1111-foo", epoch: 0}` onto the shared `work_queue`.
-2. `bar`'s `ingest` enqueues text moments later → id `502` onto `pending_ids:bbbb2222`, job similarly
-   tagged `session: "bbbb2222"`.
+1. `foo`'s `ingest` enqueues text → `ingress` pushes id `501` onto `pending_ids:3fK9pQ` and a job
+   `{id: 501, session: "3fK9pQ", output_dir: ".../3fK9pQ-foo", epoch: 0}` onto the shared `work_queue`.
+2. `bar`'s `ingest` enqueues text moments later → id `502` onto `pending_ids:9mZ2xR`, job similarly
+   tagged `session: "9mZ2xR"`.
 3. Any of the 3 workers may pop either job in either order — doesn't matter, each writes to its own
    `output_dir`.
 4. `foo`'s `player` (spawned by `foo`'s `ingest`, holding the lock at
-   `/tmp/llm-response-tts/aaaa1111-foo/player.lock`) polls `GET /next?session=aaaa1111`, only ever sees id
+   `/tmp/llm-response-tts/3fK9pQ-foo/player.lock`) polls `GET /next?session=3fK9pQ`, only ever sees id
    `501`. `bar`'s `player` only ever sees `502`. Neither can steal or block on the other's audio.
-5. Running `clear-speech` from within `bar` only empties `pending_ids:bbbb2222` and bumps
-   `epoch:bbbb2222` — `foo`'s pending speech is untouched.
+5. Running `clear-speech` from within `bar` only empties `pending_ids:9mZ2xR` and bumps
+   `epoch:9mZ2xR` — `foo`'s pending speech is untouched.
 
 ## Testing / verification plan
 
