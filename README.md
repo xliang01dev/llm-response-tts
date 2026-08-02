@@ -128,19 +128,11 @@ synthesis.
 
 ### Security audit [link](docs/security-audit.md)
 
-The whole point of running this locally is that what Claude says to you never has to leave your machine,
-so the architecture is built around that guarantee rather than just hoping it holds. Only `nginx` is bound
-to the host at all, and only on `127.0.0.1:3000`; kokoros, Redis, `ingress`, and every `worker` container
-sit on an internal-only Docker network with no host-published port, so there's nothing else on the machine
-for another process to even reach. Every request through that one gate has to carry a bearer token nginx
-checks before it forwards anything on, and startup is designed to fail closed - if the token file is
-missing or misconfigured, nginx refuses to start rather than quietly coming up unauthenticated.
-
-That network isolation is also what makes voice synthesis genuinely local instead of just locally hosted:
-kokoros runs the Kokoro-82M model in-container and never makes an outbound call at request time, so there's
-no path for audio or text to leave the machine once it's playing. This is also why kokoros specifically -
-a Rust implementation of Kokoro TTS - was picked in the first place over calling out to a cloud TTS API:
-running the model yourself, in a language with a small dependency footprint and no telemetry by default,
-means privacy is a property of the architecture rather than a promise from a third-party provider. See the
-doc for the full audit, including the network-egress check and what the per-session isolation feature does
-and doesn't protect against.
+The architecture is designed so that what Claude says to you never has to leave your machine. `nginx` is
+the only container bound to the host, gating every request behind a bearer token and failing closed if it's
+misconfigured; kokoros, Redis, `ingress`, and `worker` all sit on an internal-only Docker network with no
+host-published port. Voice synthesis stays genuinely local as a result - kokoros makes no outbound calls at
+request time - which is also why it was chosen in the first place: a Rust implementation of Kokoro TTS run
+in-container, rather than a cloud TTS API, so privacy is a property of the design, not a vendor's promise.
+The full write-up covers the network-egress audit and what per-session isolation does and doesn't protect
+against.
