@@ -2,7 +2,7 @@
 // deltas per message_id, and on the final delta POSTs the full text to the ingress service
 // (through nginx) so it lands on the Redis work queue for the worker containers.
 // Rebuild after editing: cargo build --release --manifest-path host/Cargo.toml
-use llm_response_tts_tools::common::{read_env_var, script_dir};
+use llm_response_tts_tools::common::{read_env_var, script_dir, session_key, sound_output_base};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
@@ -249,8 +249,13 @@ fn json_escape(s: &str) -> String {
 
 // Minimal hand-rolled HTTP/1.1 POST (nginx on 127.0.0.1:3000) - kept dependency-free (no
 // HTTP client crate) since the target and request shape never vary.
-fn post_text(token: &str, text: &str) -> std::io::Result<()> {
-    let body = format!("{{\"text\":\"{}\"}}", json_escape(text));
+fn post_text(token: &str, text: &str, session: &str, output_dir: &str) -> std::io::Result<()> {
+    let body = format!(
+        "{{\"text\":\"{}\",\"session\":\"{}\",\"output_dir\":\"{}\"}}",
+        json_escape(text),
+        json_escape(session),
+        json_escape(output_dir)
+    );
     let mut stream = TcpStream::connect(("127.0.0.1", 3000))?;
     let request = format!(
         "POST / HTTP/1.1\r\nHost: 127.0.0.1:3000\r\nContent-Type: application/json\r\nContent-Length: {}\r\nAuthorization: Bearer {}\r\nConnection: close\r\n\r\n{}",
@@ -313,8 +318,11 @@ fn run() -> std::io::Result<()> {
 
     let env_file = script_dir.join("docker").join(".env");
     let token = read_env_var(&env_file, "LLM_RESPONSE_TTS_BEARER_TOKEN").unwrap_or_default();
+    let (session_hash, session_dir_name) = session_key();
+    let output_dir = sound_output_base().join(&session_dir_name);
+    let output_dir_str = output_dir.to_string_lossy().to_string();
     for sentence in split_sentences(&text) {
-        post_text(&token, &sentence)?;
+        post_text(&token, &sentence, &session_hash, &output_dir_str)?;
     }
 
     // player must run from the boot volume - macOS kills CoreAudio-linked (cpal) binaries
