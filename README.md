@@ -6,6 +6,21 @@ LLM-agnostic - any tool that can stream its response text to `ingest` can use th
 integration for Claude Code's `MessageDisplay` hook out of the box; Kiro, Codex, or anything else that
 speaks LLM can wire in the same way.
 
+## Table of contents
+
+- [Prerequisites](#prerequisites)
+- [How to install](#how-to-install)
+- [How to hook up to a coding agent](#how-to-hook-up-to-a-coding-agent)
+  - [Claude Code](#claude-code)
+  - [Other coding agents](#other-coding-agents)
+- [How to customize voices](#how-to-customize-voices)
+- [What it installs](#what-it-installs)
+- [What are the env variables](#what-are-the-env-variables)
+- [Supporting documentation](#supporting-documentation)
+  - [Available voices](#available-voices-link)
+  - [Architecture](#architecture-link)
+  - [Security audit](#security-audit-link)
+
 ## Prerequisites
 
 | Tool | Install | Why it's needed |
