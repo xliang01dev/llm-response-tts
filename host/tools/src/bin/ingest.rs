@@ -326,14 +326,13 @@ fn run() -> std::io::Result<()> {
     }
 
     // player must run from the boot volume - macOS kills CoreAudio-linked (cpal) binaries
-    // executed from elsewhere with SIGKILL (Code Signature Invalid), a restriction that
-    // doesn't apply to plain binaries like this one. Resolved in priority order:
-    // /tmp/llm-response-tts/llm-response-tts-player (the dev build, see host/player/build.sh -
-    // this is also where you'd point a one-off debug build, so there's no separate override
-    // env var for that), then $CARGO_HOME/bin/llm-response-tts-player, falling back to
-    // ~/.cargo/bin if CARGO_HOME isn't set (the real install, `cargo install --path
-    // host/player`) - named llm-response-tts-player, not just player, since it's installed into
-    // a global bin directory shared with every other cargo tool on this machine.
+    // executed from elsewhere with SIGKILL (Code Signature Invalid), a restriction that doesn't
+    // apply to plain binaries like this one. ~/.cargo/bin (or $CARGO_HOME/bin, if set) is always
+    // on the boot volume regardless of where this repo lives, so spawning the `cargo install`ed
+    // copy from there - named llm-response-tts-player, not just player, since it's installed into
+    // a global bin directory shared with every other cargo tool on this machine - sidesteps the
+    // issue rather than working around it. Re-run `cargo install --path host/player --force`
+    // after editing player's source to pick up the change here.
     // player finds docker/.env via its own CARGO_MANIFEST_DIR (baked in at compile time, same as
     // script_dir() above) and derives its own session_hash from cwd - Command::spawn children
     // inherit the parent's cwd by default, and ours is wherever the hook fired from, which is
@@ -345,12 +344,7 @@ fn run() -> std::io::Result<()> {
         let home = std::env::var("HOME").map(PathBuf::from).unwrap_or_else(|_| script_dir.clone());
         home.join(".cargo")
     });
-    let dev_player = PathBuf::from("/tmp/llm-response-tts/llm-response-tts-player");
-    let player = if dev_player.exists() {
-        dev_player
-    } else {
-        cargo_home.join("bin").join("llm-response-tts-player")
-    };
+    let player = cargo_home.join("bin").join("llm-response-tts-player");
     let _ = Command::new(player)
         .stdin(Stdio::null())
         .stdout(Stdio::null())

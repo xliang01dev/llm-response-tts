@@ -59,7 +59,7 @@ doing, for anyone who wants to run or customize them individually.
    `SIGKILL (Code Signature Invalid)` — a restriction that doesn't apply to `ingest`, `clear-speech`, or
    `clear-all-speech`, none of which has such a dependency, but `cargo install` sidesteps it for all four
    either way since `~/.cargo/bin` is always on the boot volume. See "What it installs" below for the full
-   picture, including the separate dev-build path for `player`.
+   picture.
 
 4. Wire the hook in `.claude/settings.json` (project-level, already included in this repo):
 
@@ -131,26 +131,19 @@ bare role names since `~/.cargo/bin` is a global directory shared with every oth
 All four are meant to be invoked from *any* project's directory, not just this repo's own (`ingest` from the
 `MessageDisplay` hook, the rest by hand) — so none of them can rely on Claude Code's current working
 directory, or on where the installed binary file itself happens to sit (`~/.cargo/bin` is a fixed location
-shared by every cargo tool on the machine, and `player`'s dev build can live in `/tmp` too — see below).
-Instead, `ingest`, `clear-speech`, and `clear-all-speech` (`host/tools/src/common.rs::script_dir()`) and
-`player` (its own copy in `main.rs`) each bake this repo's location into the binary at **compile time**, via
-Rust's `env!("CARGO_MANIFEST_DIR")` — the directory
+shared by every cargo tool on the machine). Instead, `ingest`, `clear-speech`, and `clear-all-speech`
+(`host/tools/src/common.rs::script_dir()`) and `player` (its own copy in `main.rs`) each bake this repo's
+location into the binary at **compile time**, via Rust's `env!("CARGO_MANIFEST_DIR")` — the directory
 containing that crate's own `Cargo.toml` at the moment `cargo install` builds it. That's how they always
 find *this* repo's `docker/.env` and `tmp/` correctly regardless of which project's cwd the hook actually
 fires from. Re-run `cargo install` (step 3 above) after moving the repo to a new location, so the baked-in
 path gets updated.
 
-`player` specifically also has a **dev build path**, `host/player/build.sh`, for when you're actively
-editing its source (including one-off debug builds — there's no separate override env var for that, this
-is the one spot to point at): it builds player and, if this repo isn't already on the boot volume, copies
-the result to `/tmp/llm-response-tts/llm-response-tts-player` instead of touching `~/.cargo/bin`. The reason
-it's a separate `/tmp` copy rather than just re-running `cargo install --force` is that `~/.cargo/bin` may
-currently be backing an already-running, working `player` process — you don't want every work-in-progress
-test build to clobber the stable install. `/tmp` is also on the boot volume and gets auto-purged by macOS
-after a few days, so it's a natural disposable staging spot. `ingest` resolves which `player` binary to
-spawn in priority order: the `/tmp` dev build if present, otherwise `$CARGO_HOME/bin/llm-response-tts-player`
-(falling back to `~/.cargo/bin` if `CARGO_HOME` isn't set) — so a dev build automatically takes priority
-when one exists, with no configuration needed.
+`ingest` always spawns `player` from `$CARGO_HOME/bin/llm-response-tts-player` (falling back to
+`~/.cargo/bin` if `CARGO_HOME` isn't set) — there's no separate dev-build path or override env var. When
+iterating on `player`'s source, `cargo install --path host/player --force` (step 3 above) is how you pick up
+the change; `~/.cargo/bin` is always on the boot volume regardless of where this repo lives, so the
+CoreAudio SIGKILL restriction mentioned in step 3 never applies to it.
 
 **Five Docker services**, built into images and run via `docker-compose.yml`:
 
@@ -185,7 +178,7 @@ config template and bearer-token startup check, plus the gitignored `.env` holdi
 | --- | --- | --- |
 | `LLM_RESPONSE_TTS_BEARER_TOKEN` | Shared secret nginx requires on every request (`Authorization: Bearer <token>`); read from `docker/.env` by `ingest`, `clear-speech`, `clear-all-speech`, and `player` | none — generated into `docker/.env` by `setup.sh` (`openssl rand -hex 32`); nginx refuses to start without it |
 | `LLM_RESPONSE_TTS_SOUND_OUTPUT` | Parent directory for synthesized wav files; a fixed system path (not repo-relative) so `worker` and `player` agree without coordination. Each session writes/reads under its own `<session-hash>-<name>/` subdirectory of this path — see "Session isolation" | `/tmp/llm-response-tts/output` |
-| `CARGO_HOME` | Not project-specific — cargo's own install root. `ingest` reads it to find `player`'s release install (`$CARGO_HOME/bin/llm-response-tts-player`) when no `/tmp` dev build is present | `~/.cargo` (cargo's own default when unset) |
+| `CARGO_HOME` | Not project-specific — cargo's own install root. `ingest` reads it to find where `player` was installed (`$CARGO_HOME/bin/llm-response-tts-player`) | `~/.cargo` (cargo's own default when unset) |
 | `REDIS_URL` | Redis connection string, used by `ingress` and `worker` | `redis://redis:6379` |
 | `KOKOROS_URL` | kokoros TTS server URL, used by `worker` | `http://kokoros:3000` |
 | `KOKOROS_VOICE` | Voice model used for synthesis | `af_heart` |
