@@ -10,3 +10,7 @@ path = "src/bin/ingest.rs"
 [[bin]]
 name = "llm-response-tts-clear-speech"
 path = "src/bin/clear-speech.rs"
+
+[[bin]]
+name = "llm-response-tts-clear-all-speech"
+path = "src/bin/clear-all-speech.rs"
