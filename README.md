@@ -6,12 +6,14 @@ LLM-agnostic - any tool that can stream its response text to `ingest` can use th
 integration for Claude Code's `MessageDisplay` hook out of the box; Kiro, Codex, or anything else that
 speaks LLM can wire in the same way.
 
-## How to install
+## Prerequisites
 
 | Tool | Install | Why it's needed |
 | --- | --- | --- |
 | Rust | `brew install rust` | Provides `cargo`, which builds the four host binaries (`ingest`, `clear-speech`, `clear-all-speech`, `player`) |
 | Docker | `brew install --cask docker` | Runs kokoros, Redis, `ingress`, and `worker` via Compose; open Docker Desktop once after installing so its daemon is running |
+
+## How to install
 
 Run `./setup.sh` to do all of the below in one shot: installs Rust if missing (Docker must already be
 installed), creates `docker/.env`, installs the host binaries, builds and starts the Docker stack, and
@@ -37,7 +39,21 @@ doing, for anyone who wants to run or customize them individually.
    cargo install --path host/player --force
    ```
 
-4. Wire the hook in `.claude/settings.json` (already included in this repo).
+At this point the pipeline is installed and running, but nothing is feeding it text yet - see
+"How to hook up to a coding agent" below to actually wire one in.
+
+## How to hook up to a coding agent
+
+The queue, worker pool, and player are LLM-agnostic - `ingest` is the only piece that's specific to
+whichever tool is calling it, and all it needs is streamed response text on stdin as it's generated.
+Any coding agent that can invoke a command per streamed chunk (or otherwise be made to) can drive this
+pipeline the same way Claude Code does below.
+
+### Claude Code
+
+This repo ships Claude Code's integration out of the box, via its `MessageDisplay` hook.
+
+1. Wire the hook in `.claude/settings.json` (already included in this repo).
 
    ```json
    {
@@ -57,16 +73,27 @@ doing, for anyone who wants to run or customize them individually.
    }
    ```
 
-5. Open Claude Code in this project directory and approve the `.claude/settings.json` trust prompt.
+2. Open Claude Code in this project directory and approve the `.claude/settings.json` trust prompt.
 
-6. Talk to Claude normally; responses should now play back as audio.
+3. Talk to Claude normally; responses should now play back as audio.
 
-### Customizing
+### Other coding agents
 
-| Setting | How to change | Notes |
-| --- | --- | --- |
-| Voice | Set `KOKOROS_VOICE` on the `worker` service in `docker-compose.yml`, then `docker compose up -d` (no rebuild needed - it's an env var, not baked into the image) | Default `af_heart`; see [available voices](docs/voices.md) |
-| Server URL/port | Update the hardcoded `127.0.0.1:3000` in `host/tools/src/bin/ingest.rs`'s `post_text` and `host/player/src/main.rs`'s `BASE_URL`, then reinstall (step 3 above) | Only needed if you change the `nginx` host port mapping in `docker-compose.yml` |
+Kiro, Codex, or any other tool with an equivalent hook mechanism can wire `llm-response-tts-ingest`
+into their own settings the same way, to get responses converted to voice.
+
+## How to customize voices
+
+Set `KOKOROS_VOICE` on the `worker` service in `docker-compose.yml`, then `docker compose up -d`
+(no rebuild needed - it's an env var, not baked into the image):
+
+```yaml
+worker:
+  environment:
+    KOKOROS_VOICE: af_heart # change to any voice from docs/voices.md
+```
+
+Default is `af_heart`; see [available voices](docs/voices.md) for the full list.
 
 ## What it installs
 
@@ -102,7 +129,7 @@ config template and bearer-token startup check, plus the gitignored `.env` holdi
 
 See [architecture](docs/architecture.md) for why sound output lives outside the repo and split per session.
 
-## Env variables
+## What are the env variables
 
 | Name | Set in | What it represents | Default |
 | --- | --- | --- | --- |
@@ -118,25 +145,20 @@ See [architecture](docs/architecture.md) for why sound output lives outside the 
 
 ## Supporting documentation
 
-### Available voices [link](docs/voices.md)
+### Available voices ([link](docs/voices.md))
 
-The full list of voice names kokoros accepts, beyond the handful mentioned in "Customizing" above, plus
+The full list of voice names kokoros accepts, beyond the handful mentioned in "How to customize voices" above, plus
 where to look if you need one that isn't listed there.
 
-### Architecture [link](docs/architecture.md)
+### Architecture ([link](docs/architecture.md))
 
 How a message flows from the hook through `ingest`, `ingress`, the `worker` pool, and `player`, including
 diagrams, the per-session isolation design, and how playback ordering is kept correct despite parallel
 synthesis.
 
-### Security audit [link](docs/security-audit.md)
+### Security audit ([link](docs/security-audit.md))
 
-The architecture is designed so that what your LLM tool says back to you never has to leave your machine.
-`nginx` is the only container bound to the host, gating every request behind a bearer token and failing
-closed if it's misconfigured; kokoros, Redis, `ingress`, and `worker` all sit on an internal-only Docker
-network with no host-published port. Voice synthesis stays genuinely local as a result - kokoros makes no
-outbound calls at request time - which is also why it was chosen in the first place: a Rust implementation
-of Kokoro TTS run in-container, rather than a cloud TTS API, so privacy is a property of the design, not a
-vendor's promise.
-The full write-up covers the network-egress audit and what per-session isolation does and doesn't protect
-against.
+The architecture is designed so that what your LLM tool says back to you never has to leave your machine:
+a bearer token gates every request, and everything except `nginx` sits on an internal-only Docker network
+with no route out. The full write-up covers the network posture, container hardening, and what per-session
+isolation does and doesn't protect against.
