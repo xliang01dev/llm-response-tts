@@ -11,6 +11,84 @@ use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+const BASE62_ALPHABET: &[u8; 62] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+
+// Identical logic to host/tools/src/common.rs::murmurhash3_x86_32 - duplicated rather than
+// shared, since player is a separate crate that keeps its own small copies of anything it
+// needs from tools (see its existing read_env_var). The two copies must stay byte-for-byte
+// identical for ingest and player to agree on the same session_hash for the same cwd.
+fn murmurhash3_x86_32(data: &[u8], seed: u32) -> u32 {
+    const C1: u32 = 0xcc9e2d51;
+    const C2: u32 = 0x1b873593;
+
+    let mut hash = seed;
+    let chunks = data.chunks_exact(4);
+    let tail = chunks.remainder();
+
+    for chunk in chunks {
+        let mut k = u32::from_le_bytes(chunk.try_into().unwrap());
+        k = k.wrapping_mul(C1);
+        k = k.rotate_left(15);
+        k = k.wrapping_mul(C2);
+        hash ^= k;
+        hash = hash.rotate_left(13);
+        hash = hash.wrapping_mul(5).wrapping_add(0xe6546b64);
+    }
+
+    let mut k1: u32 = 0;
+    for (i, &byte) in tail.iter().enumerate() {
+        k1 ^= (byte as u32) << (8 * i);
+    }
+    if !tail.is_empty() {
+        k1 = k1.wrapping_mul(C1);
+        k1 = k1.rotate_left(15);
+        k1 = k1.wrapping_mul(C2);
+        hash ^= k1;
+    }
+
+    hash ^= data.len() as u32;
+    hash ^= hash >> 16;
+    hash = hash.wrapping_mul(0x85ebca6b);
+    hash ^= hash >> 13;
+    hash = hash.wrapping_mul(0xc2b2ae35);
+    hash ^= hash >> 16;
+
+    hash
+}
+
+fn to_base62(mut n: u32, width: usize) -> String {
+    let mut chars = Vec::with_capacity(width);
+    loop {
+        chars.push(BASE62_ALPHABET[(n % 62) as usize]);
+        n /= 62;
+        if n == 0 {
+            break;
+        }
+    }
+    while chars.len() < width {
+        chars.push(BASE62_ALPHABET[0]);
+    }
+    chars.reverse();
+    String::from_utf8(chars).unwrap()
+}
+
+fn session_key() -> (String, String) {
+    let cwd = std::env::current_dir().expect("failed to get current dir");
+    let cwd_str = cwd.to_string_lossy();
+    let session_hash = to_base62(murmurhash3_x86_32(cwd_str.as_bytes(), 0), 6);
+    let last_component = cwd
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "root".to_string());
+    (session_hash.clone(), format!("{session_hash}-{last_component}"))
+}
+
+fn sound_output_base() -> PathBuf {
+    std::env::var("LLM_RESPONSE_TTS_SOUND_OUTPUT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/tmp/llm-response-tts/output"))
+}
+
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_WAIT: Duration = Duration::from_secs(45); // give up on a "PROCESSING" id after this long
 const IDLE_EXIT: Duration = Duration::from_secs(10); // exit after this long with nothing pending
@@ -209,5 +287,32 @@ fn main() {
                 std::thread::sleep(POLL_INTERVAL);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn murmurhash3_of_empty_input_is_zero() {
+        assert_eq!(murmurhash3_x86_32(b"", 0), 0);
+    }
+
+    #[test]
+    fn to_base62_of_zero_is_all_zero_chars() {
+        assert_eq!(to_base62(0, 6), "000000");
+    }
+
+    #[test]
+    fn to_base62_roundtrips_small_value() {
+        assert_eq!(to_base62(125, 6), "000021");
+    }
+
+    #[test]
+    fn session_key_dir_name_starts_with_the_hash() {
+        let (hash, dir_name) = session_key();
+        assert_eq!(hash.len(), 6);
+        assert!(dir_name.starts_with(&format!("{hash}-")));
     }
 }
