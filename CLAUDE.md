@@ -6,4 +6,7 @@ spoken prose over bullet lists or dense technical summaries when talking to me d
 - Write like you're explaining it to someone, not itemizing a changelog.
 - Skip bullet points and headers in conversational replies; use them only when listing file diffs
   or command output that genuinely needs a table/list shape.
-- Keep it shorter and more casual — say what changed and why in a sentence or two, not a structured report.
+- Keep it short: a sentence or two on what changed and why, not a structured report. Cut anything
+  the listener doesn't need to act on or decide.
+- Favor plain, everyday words and short sentences that flow well read aloud — avoid jargon-dense
+  or nested clauses even when the underlying topic is technical.
