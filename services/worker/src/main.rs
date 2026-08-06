@@ -232,6 +232,7 @@ fn write_output(dir: &Path, id: i64, bytes: &[u8]) -> std::io::Result<()> {
     let tmp_path = dir.join(format!("{:010}.wav.tmp", id));
     let final_path = dir.join(format!("{:010}.wav", id));
     std::fs::write(&tmp_path, bytes)?;
+    std::fs::set_permissions(&tmp_path, std::os::unix::fs::PermissionsExt::from_mode(0o644))?;
     std::fs::rename(&tmp_path, &final_path)
 }
 
