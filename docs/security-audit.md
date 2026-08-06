@@ -1,9 +1,7 @@
 # Security audit results
 
 This describes the security posture of this pipeline as designed: what's applied, why, what it
-buys you, and how far it goes toward eliminating the underlying risk. For test methodology and
-raw verification output behind each claim below, see
-[security-resolution.md](security-resolution.md).
+buys you, and how far it goes toward eliminating the underlying risk.
 
 ## Network isolation: two networks instead of one flat one
 
@@ -82,10 +80,20 @@ than merely unobserved.
 ## Non-root containers on pinned, stable base images
 
 `ingress` and `worker` build on `debian:bookworm-slim`, a stable release rather than a rolling
-branch, and run as a dedicated non-root `appuser`. nginx is pinned to `nginx:1.31.3-alpine`
-rather than a floating tag, and kokoros' Docker build source is pinned to a specific audited
-commit (`b54354b860df94b064e254524777ce41d4d2c689`) rather than an unpinned git URL that could
-resolve to a different upstream commit on any given build.
+branch, and run as a dedicated non-root `appuser`. Every image in the stack - the
+`rust:1.88.0-slim-trixie` builder stage, the `debian:bookworm-slim` runtime stage, nginx
+(`nginx:1.31.3-alpine`), and Redis (`redis:7.4.10-alpine`) - is pinned by content digest
+(`image:tag@sha256:...`), not just a version tag, and kokoros' Docker build source is pinned to a
+specific audited commit (`b54354b860df94b064e254524777ce41d4d2c689`) rather than an unpinned git
+URL that could resolve to a different upstream commit on any given build.
+
+A version tag alone names a release, not a fixed set of bytes: the same tag can be repointed to
+different image content later, most commonly when an upstream maintainer rebuilds it to pick up
+an OS-level patch without changing the version number. A digest pins the bytes themselves, so
+`image:tag@sha256:...` can only ever resolve to the one image that hash matches, regardless of
+where the tag itself moves afterward. Bumping any of these pins - base images or kokoros' commit
+alike - is a deliberate, re-auditable act, never an implicit side effect of
+`docker compose up --build`.
 
 Pinning and non-root solve two different problems. Pinning is about provenance: it makes "what
 was audited" and "what's deployed" provably the same thing, until the pin is deliberately bumped

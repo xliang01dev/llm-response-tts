@@ -21,8 +21,8 @@ struct EnqueueRequest {
     // A directory *name* (e.g. "2wfFFn-my-project"), not a path - see
     // valid_session_dir(). ingress derives the actual output_dir server-side from this and
     // its own sound_output_base(), rather than trusting a client-supplied path directly
-    // (see docs/security-resolution.md #2 - a prior version trusted output_dir as-is, which
-    // let an authenticated caller target any other session's directory).
+    // (a prior version trusted output_dir as-is, which let an authenticated caller target
+    // any other session's directory).
     session_dir: String,
 }
 
